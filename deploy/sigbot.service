@@ -1,0 +1,15 @@
+[Unit]
+Description=sigbot crypto signals
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# поменяй пользователя и путь на свои
+User=rifat
+WorkingDirectory=/home/rifat/sigbot1
+ExecStart=/home/rifat/sigbot1/.venv/bin/python -m sigbot run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
