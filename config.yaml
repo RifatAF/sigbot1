@@ -1,0 +1,56 @@
+params_version: "v1"
+
+universe:
+  top_n: 30
+  quote: USDT
+  exclude: [USDCUSDT, FDUSDUSDT]
+  refresh_hours: 24
+
+publishing:
+  # paper  : сигналы пишутся в журнал с пометкой paper и публикуются в канал
+  # confirm: каждый пост ждёт кнопки владельца
+  # auto   : публикация без подтверждения
+  mode: paper
+  paused: false
+  kill_switch: false
+
+risk:
+  deposit_usd: 1000
+  risk_min_pct: 0.5
+  risk_max_pct: 1.5
+  public_leverage_cap: 25
+  personal_leverage_cap: 10
+  maintenance_margin_pct: 0.5
+
+scanner:
+  interval_minutes: 60
+  max_signals_per_day: 2
+  min_strength: 0.6
+  correlation_window_hours: 168
+  correlation_threshold: 0.8
+
+indicators:
+  zscore_window: 168
+  pivot_left: 3
+  pivot_right: 3
+  divergence_lookback: 60
+  rsi_period: 14
+  trend_ema_fast: 20
+  trend_ema_slow: 50
+  weights:
+    oi: 1.0
+    funding: 1.0
+    cvd_futures: 1.0
+    cvd_spot: 1.0
+    premium: 0.5
+    liquidations: 1.0
+  fear_greed:
+    long_block_above: 85
+    short_block_below: 15
+
+liq_map:
+  leverages: [10, 25, 50, 100]
+  bin_pct: 0.25
+
+storage:
+  db_path: data/sigbot.sqlite
