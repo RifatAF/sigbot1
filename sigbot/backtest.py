@@ -65,13 +65,16 @@ def candidates(prep: dict[str, pd.DataFrame], cfg, min_strength: float) -> dict[
     by_ts: dict[int, list] = {}
     floor = cfg["engine"]["min_divergence_score"]
     for sym, p in prep.items():
-        idx = np.flatnonzero((p.bull.to_numpy() >= floor) | (p.bear.to_numpy() >= floor))
+        if cfg["engine"].get("setup") == "capitulation":
+            idx = np.flatnonzero(p.mom24.to_numpy() <= -cfg["capitulation"]["min_drop_sigma"])
+        else:
+            idx = np.flatnonzero((p.bull.to_numpy() >= floor) | (p.bear.to_numpy() >= floor))
         for i in idx:
             c = engine.decide(p, int(i), sym, cfg, min_strength=min_strength)
             if c is None:
                 continue
             lo = max(0, i - 720)
-            if "oi" in p and p.oi.iloc[lo:i + 1].notna().sum() > 24:
+            if c.features.get("setup") != "capitulation" and "oi" in p and p.oi.iloc[lo:i + 1].notna().sum() > 24:
                 lm = ind.liquidation_map(p.close.iloc[lo:i + 1], p.oi.iloc[lo:i + 1].ffill().fillna(0),
                                          cfg["liq_map"]["leverages"], cfg["liq_map"]["bin_pct"])
                 c2 = engine.decide(p, int(i), sym, cfg, min_strength=min_strength,
@@ -128,8 +131,11 @@ def simulate(prep, cands_by_ts, cfg, start_ms, end_ms, deposit=1000.0) -> list[B
                                     per_day.get(day, 0), sc["max_signals_per_day"], corr_cache[0],
                                     sc["correlation_threshold"])
             for c in chosen:
-                sz = risk.size(c.entry, c.stop, c.side, c.strength, equity, rc["risk_min_pct"],
-                               rc["risk_max_pct"], rc["public_leverage_cap"], rc["maintenance_margin_pct"])
+                orisk = [v[2].risk_pct for v in open_.values()]
+                g = risk.guard(rc, [(x.exit_ts, x.pnl_pct) for x in done], orisk, t)
+                sz = risk.size_guarded(c.entry, c.stop, c.side, c.strength, equity, rc, g, orisk)
+                if sz is None:
+                    continue
                 st = TradeState(c.side, c.entry, c.stop, c.invalidation, c.tp1, c.tp2, c.ts)
                 open_[c.symbol] = (st, c, sz, equity, 0.0)
                 per_day[day] = per_day.get(day, 0) + 1
@@ -192,7 +198,8 @@ def walk_forward(conn, cfg, symbols: list[str]) -> dict:
     while t0 < end:
         t1 = min(t0 + bc["test_days"] * DAY, end)
         tr_start = t0 - bc["train_days"] * DAY
-        best, best_r = cfg["scanner"]["min_strength"], -1e9
+        best = cfg["scanner"]["min_strength"] if cfg["scanner"]["min_strength"] in grid else grid[0]
+        best_r = -1e9
         train_scores = {}
         for ms in grid:
             tr = simulate(prep, cand_grid[ms], cfg, tr_start, t0 - HOUR)

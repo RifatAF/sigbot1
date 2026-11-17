@@ -81,14 +81,26 @@ class Live:
         chosen = scanner.select(cands, [(o["symbol"], o["side"]) for o in self.open_trades()], taken,
                                 cfg["scanner"]["max_signals_per_day"], corr, cfg["scanner"]["correlation_threshold"])
         ids = []
+        rc = cfg["risk"]
         for c in chosen:
-            ids.append(await self.open_signal(c, frames[c.symbol], cfg))
+            orisk = [o["risk_pct"] for o in self.open_trades()]
+            results = [(x["closed_ts"], x["pnl_pct"]) for x in
+                       sorted(self.closed_trades(0, t + DAY), key=lambda x: x["closed_ts"])]
+            g = risk.guard(rc, results, orisk, t)
+            sz = risk.size_guarded(c.entry, c.stop, c.side, c.strength, rc["deposit_usd"], rc, g, orisk)
+            if sz is None:
+                log.info("skip %s %s: %s", c.symbol, c.side, g.reason or "stop too tight or no risk room")
+                if not g.allow and settings.get(self.conn, "guard_notice") != g.reason:
+                    settings.put(self.conn, "guard_notice", g.reason)
+                    await self.pub.notify_owner(f"Risk guard: new signals stopped ({g.reason}).")
+                continue
+            ids.append(await self.open_signal(c, frames[c.symbol], cfg, sz))
         return ids
 
-    async def open_signal(self, c: engine.Candidate, p: pd.DataFrame, cfg) -> int:
+    async def open_signal(self, c: engine.Candidate, p: pd.DataFrame, cfg, sz: risk.Sizing | None = None) -> int:
         rc = cfg["risk"]
-        sz = risk.size(c.entry, c.stop, c.side, c.strength, rc["deposit_usd"], rc["risk_min_pct"],
-                       rc["risk_max_pct"], rc["public_leverage_cap"], rc["maintenance_margin_pct"])
+        sz = sz or risk.size(c.entry, c.stop, c.side, c.strength, rc["deposit_usd"], rc["risk_min_pct"],
+                             rc["risk_max_pct"], rc["public_leverage_cap"], rc["maintenance_margin_pct"])
         feats = dict(c.features)
         feats.update({"invalidation": c.invalidation, "liq_price": sz.liq_price, "leverage_capped": sz.capped,
                       "personal_leverage": min(sz.leverage, rc["personal_leverage_cap"])})

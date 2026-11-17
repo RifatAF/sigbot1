@@ -1,4 +1,4 @@
-params_version: "v1"
+params_version: "v2"
 
 universe:
   top_n: 30
@@ -21,6 +21,14 @@ risk:
   public_leverage_cap: 25
   personal_leverage_cap: 10
   maintenance_margin_pct: 0.5
+  # портфельный предохранитель
+  max_open_trades: 3
+  max_open_risk_pct: 3.0
+  dd_half_pct: 10          # просадка от пика: риск вдвое меньше
+  dd_pause_pct: 20         # новые входы стоп, владельцу уведомление
+  dd_pause_days: 7         # длина паузы, потом просадка считается от нового пика
+  loss_streak: 3           # серия убытков подряд: риск вдвое меньше
+  min_stop_pct: 1.5        # стоп уже: комиссия больше ~0.1R, сигнал не берётся
 
 scanner:
   interval_minutes: 60
@@ -64,6 +72,7 @@ llm:
   timeout_s: 60
 
 engine:
+  setup: capitulation          # capitulation (v2) | divergence (v1)
   min_divergence_score: 1.0    # одна регулярная или две скрытые дивергенции
   min_index: 0.0               # индекс не против сделки
   stop_atr_buffer: 0.3
@@ -73,6 +82,13 @@ engine:
   tp2_snap_min_r: 1.8          # tp2 переносится на кластер ликвидаций в этом диапазоне
   tp2_snap_max_r: 4.0
   max_hold_hours: 72
+
+capitulation:
+  min_drop_sigma: 2.5          # падение за 24ч в суточных сигмах
+  require_oi_drop: true        # OI за сутки снизился: позиции вынесены
+  stop_sigma: 3.0
+  tp1_sigma: 1.25
+  target_sigma: 2.5
 
 trade:
   tp1_close_fraction: 0.5

@@ -27,8 +27,8 @@ def test_parse_klines_and_archive_rows():
     assert parse_klines(raw) == [(1000, 1.0, 2.0, 0.5, 1.5, 10.0, 6.0)]
     rows = [["1735689600000000", "1", "2", "0.5", "1.5", "10", "x", "15", "5", "6", "9", "0"]]
     assert archive.parse_kline_rows(rows)[0][0] == 1735689600000   # микросекунды спота -> мс
-    m = archive.parse_metrics_rows([["2026-09-01 00:05:00", "BTCUSDT", "100.5", "8000000"]])
-    assert m == [(1788220800000 + 5 * MIN, 100.5, 8000000.0)]
+    m = archive.parse_metrics_rows([["2026-09-01 00:05:00", "BTCUSDT", "100.5", "8000000", "1.4", "1.2", "1.3", "0.9"]])
+    assert m[0][:3] == (1788220800000 + 5 * MIN, 100.5, 8000000.0) and m[0][3:7] == (1.4, 1.2, 1.3, 0.9)
 
 
 class FakeBinance:

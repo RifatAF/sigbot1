@@ -171,3 +171,15 @@ def test_backtest_runs_on_synthetic_data(cfg, conn):
         assert t["exit_ts"] > t["entry_ts"] and t["fees_pct"] > 0
     md = backtest.to_markdown(rep)
     assert "Buy and hold" in md and "Вердикт" in md
+
+
+def test_capitulation_setup(cfg):
+    cfg["engine"]["setup"] = "capitulation"
+    p = prepared_row(mom24=-3.5, sigma24=0.04, doi24=-1.0)
+    c = engine.decide(p, len(p) - 1, "SOLUSDT", cfg)
+    cc = cfg["capitulation"]
+    assert c.side == "long" and c.features["setup"] == "capitulation"
+    assert c.stop == pytest.approx(100 * (1 - cc["stop_sigma"] * 0.04))
+    assert c.tp2 == pytest.approx(100 * (1 + cc["target_sigma"] * 0.04)) and c.tp1 < c.tp2
+    assert c.strength == pytest.approx(0.75)
+    assert engine.decide(prepared_row(mom24=-2.0, sigma24=0.04), 299, "X", cfg) is None   # падение мало

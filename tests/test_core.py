@@ -167,3 +167,21 @@ def test_textguard_blocks_unknown_number():
 def test_llm_comment_no_digits():
     assert textguard.llm_text_has_no_digits("Funding flipped negative while spot keeps buying.")
     assert not textguard.llm_text_has_no_digits("Target around 70k")
+
+
+def test_risk_guard_throttles_and_caps(cfg):
+    from sigbot import risk
+    rc = dict(cfg["risk"], max_open_trades=3, max_open_risk_pct=3.0, dd_half_pct=10, dd_pause_pct=20,
+              loss_streak=3, min_stop_pct=1.5)
+    assert risk.guard(rc, [1, 1], []).multiplier == 1.0
+    assert risk.guard(rc, [5, -12], []).multiplier == 0.5                    # просадка больше 10%
+    assert not risk.guard(rc, [5, -25], []).allow                            # просадка больше 20%
+    day = 86_400_000
+    assert not risk.guard(dict(rc, dd_pause_days=7), [(0, 5), (day, -25)], [], 3 * day).allow
+    assert risk.guard(dict(rc, dd_pause_days=7), [(0, 5), (day, -25)], [], 9 * day).allow   # пауза отбыта
+    assert risk.guard(rc, [2, -0.5, -0.5, -0.5], []).multiplier == 0.5       # три убытка подряд
+    assert not risk.guard(rc, [], [1, 1, 1]).allow                           # три открытые сделки
+    g = risk.guard(rc, [], [1.5, 1.0])
+    sz = risk.size_guarded(100, 97, "long", 1.0, 1000, rc, g, [1.5, 1.0])
+    assert sz.risk_pct == 0.5                                                # остаток лимита 0.5%
+    assert risk.size_guarded(100, 99, "long", 1.0, 1000, rc, risk.guard(rc, [], []), []) is None  # стоп 1%

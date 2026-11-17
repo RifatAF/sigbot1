@@ -10,6 +10,7 @@ HOUR = 3_600_000
 def cfg():
     c = config.load()
     c["storage"]["db_path"] = ":memory:"
+    c["engine"]["setup"] = "divergence"     # тесты v1; v2 проверяется отдельно
     return c
 
 

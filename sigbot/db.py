@@ -14,6 +14,14 @@ CREATE TABLE IF NOT EXISTS open_interest (
     symbol TEXT, ts INTEGER, oi REAL, oi_usd REAL,
     PRIMARY KEY (symbol, ts)
 );
+CREATE TABLE IF NOT EXISTS positioning (
+    symbol TEXT, ts INTEGER, top_ls_acc REAL, top_ls_pos REAL, ls_acc REAL, taker_ls_vol REAL,
+    PRIMARY KEY (symbol, ts)
+);
+CREATE TABLE IF NOT EXISTS basis (
+    symbol TEXT, ts INTEGER, basis REAL,
+    PRIMARY KEY (symbol, ts)
+);
 CREATE TABLE IF NOT EXISTS funding (
     symbol TEXT, ts INTEGER, rate REAL,
     PRIMARY KEY (symbol, ts)

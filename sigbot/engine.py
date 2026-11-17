@@ -118,11 +118,47 @@ def prepare(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
             oscs[c] = df[c]
     dv = divergence_table(df, oscs, ic["pivot_left"], ic["pivot_right"], ic["divergence_lookback"],
                           ic.get("divergence_max_age", ic["pivot_right"] + 2))
+    lr = np.log(df.close).diff()
+    vol = lr.rolling(168, min_periods=48).std()
+    out["sigma24"] = vol * np.sqrt(24)                                    # суточная сигма в долях цены
+    out["mom24"] = np.log(df.close / df.close.shift(24)) / out.sigma24    # падение за сутки в сигмах
+    if "oi" in df:
+        oi = df.oi.where(df.oi > 0)
+        out["doi24"] = np.log(oi / oi.shift(24)) / out.sigma24
     return out.join(dv)
+
+
+def decide_capitulation(p: pd.DataFrame, i: int, symbol: str, cfg: dict) -> Candidate | None:
+    """v2: отскок после каскада ликвидаций. Лонг, когда монета за сутки упала сильнее порога в сигмах.
+    Стоп широкий (k сигм), цель короткая, выход по времени. Дивергенции идут в пост как контекст."""
+    cc = cfg["capitulation"]
+    row = p.iloc[i]
+    m, sg = row.get("mom24", np.nan), row.get("sigma24", np.nan)
+    if i < cfg["indicators"]["zscore_window"] or not (np.isfinite(m) and np.isfinite(sg)) or sg <= 0:
+        return None
+    if m > -cc["min_drop_sigma"]:
+        return None
+    if cc.get("require_oi_drop") and not (row.get("doi24", 0) < 0):
+        return None
+    entry = float(row.close)
+    u = entry * float(sg)
+    stop = entry - cc["stop_sigma"] * u
+    tp2 = entry + cc["target_sigma"] * u
+    tp1 = entry + cc["tp1_sigma"] * u
+    strength = float(np.clip(0.5 + 0.5 * (-m - cc["min_drop_sigma"]) / 2.0, 0, 1))
+    feats = {"setup": "capitulation", "drop_sigma": round(float(-m), 2), "divergences": list(row.labels),
+             "trend_4h": int(row.trend), "rsi": round(float(row.rsi), 2), "atr": float(row.atr),
+             "funding": None if "funding" not in p else float(row.funding),
+             "fear_greed": None if not np.isfinite(row.get("fear_greed", np.nan)) else int(row.fear_greed),
+             "tp2_from_liq_cluster": False}
+    return Candidate(symbol, int(row.ts), "long", entry, float(stop), float(stop), float(tp1), float(tp2),
+                     round(strength, 3), feats)
 
 
 def decide(p: pd.DataFrame, i: int, symbol: str, cfg: dict, min_strength: float | None = None,
            liq_clusters: dict | None = None) -> Candidate | None:
+    if cfg.get("engine", {}).get("setup") == "capitulation":
+        return decide_capitulation(p, i, symbol, cfg)
     ec = cfg["engine"]
     row = p.iloc[i]
     if i < cfg["indicators"]["zscore_window"] or not np.isfinite(row.atr) or row.atr <= 0:

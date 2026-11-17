@@ -50,7 +50,9 @@ def parse_metrics_rows(rows) -> list[tuple]:
     out = []
     for r in rows:
         ts = int(datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp() * 1000)
-        out.append((ts, float(r[2]), float(r[3])))
+        f = [float(x) if x not in ("", None) else float("nan") for x in r[2:8]]
+        f += [float("nan")] * (6 - len(f))
+        out.append((ts, *f))
     return out
 
 
@@ -104,7 +106,9 @@ class Archive:
                 hourly[x[0] // 3_600_000] = x
             data = list(hourly.values())
             self.conn.executemany("INSERT OR REPLACE INTO open_interest VALUES (?,?,?,?)",
-                                  [(symbol, *x) for x in data])
+                                  [(symbol, *x[:3]) for x in data])
+            self.conn.executemany("INSERT OR REPLACE INTO positioning VALUES (?,?,?,?,?,?)",
+                                  [(symbol, x[0], *x[3:7]) for x in data])
             n += len(data)
         return n
 
@@ -120,12 +124,31 @@ class Archive:
             n += len(data)
         return n
 
+    async def basis(self, symbol: str, start: date, end: date):
+        """Премия фьючерса к индексу (premiumIndexKlines 1h), close в долях."""
+        n = 0
+        for y, m in _months(start, end):
+            rows = await self._get(
+                f"{BASE}/futures/um/monthly/premiumIndexKlines/{symbol}/1h/{symbol}-1h-{y}-{m:02d}.zip")
+            if rows is None:
+                rows = []
+                d = date(y, m, 1)
+                while d.month == m and d <= end:
+                    r = await self._get(f"{BASE}/futures/um/daily/premiumIndexKlines/{symbol}/1h/{symbol}-1h-{d}.zip")
+                    rows += r or []
+                    d += timedelta(days=1)
+            data = [(_ts_ms(r[0]), float(r[4])) for r in rows]
+            self.conn.executemany("INSERT OR REPLACE INTO basis VALUES (?,?,?)", [(symbol, *x) for x in data])
+            n += len(data)
+        return n
+
     async def symbol_all(self, symbol: str, start: date, end: date):
         r = await asyncio.gather(
             self.klines(symbol, "futures", "1h", start, end),
             self.klines(symbol, "spot", "1h", start, end),
             self.metrics(symbol, start, end),
             self.funding(symbol, start, end),
+            self.basis(symbol, start, end),
         )
-        log.info("%s archive: fut=%d spot=%d oi=%d funding=%d", symbol, *r)
+        log.info("%s archive: fut=%d spot=%d oi=%d funding=%d basis=%d", symbol, *r)
         return r

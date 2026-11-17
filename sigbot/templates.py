@@ -59,6 +59,9 @@ def signal(sig: dict, comment: str = "", zones: list[dict] | None = None) -> tup
         f"Risk: {f.n(sig['risk_pct'])}% of deposit · effective leverage x{f.n(sig['leverage'], 1)}",
         f"Strength: {f.n(sig['strength'])}",
     ]
+    if feats.get("setup") == "capitulation" and feats.get("drop_sigma") is not None:
+        lines.append(f"Setup: rebound after a liquidation flush, 24h drop {f.n(feats['drop_sigma'], 1)} sigma, "
+                     "open interest flushed")
     if feats.get("divergences"):
         lines.append(f"Divergences: {escape(_div_human(feats['divergences']), quote=False)}")
     trend = {1: "up", -1: "down", 0: "flat"}.get(feats.get("trend_4h"), "n/a")
@@ -143,7 +146,10 @@ def method(cfg: dict, bt: dict | None) -> tuple[str, list[float]]:
         "The bot never places orders; it only publishes ideas.", "",
         f"• Universe: top {f.i(cfg['universe']['top_n'])} USDT perpetuals by volume, scanned every hour.",
         "• Inputs: open interest, funding, futures and spot CVD, liquidations, Coinbase premium, Fear &amp; Greed.",
-        "• Entries need bullish or bearish divergences (RSI, CVD, open interest) in line with the 4h trend.",
+        ("• Entries: long after a liquidation flush (a sharp 24h drop with open interest falling), "
+         "wide stop, short target, exit by time. Divergences are shown as context."
+         if cfg["engine"].get("setup") == "capitulation" else
+         "• Entries need bullish or bearish divergences (RSI, CVD, open interest) in line with the 4h trend."),
         f"• Risk per trade: {f.n(rc['risk_min_pct'], 1)}% to {f.n(rc['risk_max_pct'], 1)}% of deposit, "
         f"leverage capped at x{f.i(rc['public_leverage_cap'])}.",
         "• Management: half closed at TP1, stop to breakeven halfway to TP2, exit if the idea breaks. No averaging down.",
