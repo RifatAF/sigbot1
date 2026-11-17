@@ -37,6 +37,25 @@ CREATE TABLE IF NOT EXISTS health (
     ts INTEGER, component TEXT, status TEXT, detail TEXT
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY, value TEXT NOT NULL, updated INTEGER
+);
+CREATE TABLE IF NOT EXISTS trade_state (
+    signal_id INTEGER PRIMARY KEY REFERENCES signals(id),
+    status TEXT NOT NULL, stop REAL NOT NULL, remaining REAL NOT NULL,
+    be_moved INTEGER NOT NULL DEFAULT 0, last_ts INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, kind TEXT NOT NULL,
+    signal_id INTEGER, status TEXT NOT NULL, text TEXT NOT NULL, photo TEXT,
+    message_id INTEGER, detail TEXT
+);
+CREATE TABLE IF NOT EXISTS blogger_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, author TEXT NOT NULL,
+    source TEXT, symbol TEXT NOT NULL, bias TEXT, levels_json TEXT NOT NULL,
+    conditions TEXT, call_ts INTEGER NOT NULL, expires_ts INTEGER NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0, raw_json TEXT
+);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     params_version TEXT NOT NULL,

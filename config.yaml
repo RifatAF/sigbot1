@@ -34,6 +34,7 @@ indicators:
   pivot_left: 3
   pivot_right: 3
   divergence_lookback: 60
+  divergence_max_age: 5
   rsi_period: 14
   trend_ema_fast: 20
   trend_ema_slow: 50
@@ -54,9 +55,48 @@ liq_map:
 
 storage:
   db_path: data/sigbot.sqlite
+  keep_1m_days: 14
 
 llm:
   # ключ GEMINI_API_KEY из .env; при ошибке или таймауте берётся запасная модель
   model: gemini-flash-latest
   fallback_model: gemini-flash-lite-latest
   timeout_s: 60
+
+engine:
+  min_divergence_score: 1.0    # одна регулярная или две скрытые дивергенции
+  min_index: 0.0               # индекс не против сделки
+  stop_atr_buffer: 0.3
+  min_stop_atr: 0.7
+  tp1_r: 1.2
+  tp2_r: 2.5
+  tp2_snap_min_r: 1.8          # tp2 переносится на кластер ликвидаций в этом диапазоне
+  tp2_snap_max_r: 4.0
+  max_hold_hours: 72
+
+trade:
+  tp1_close_fraction: 0.5
+  breakeven_at_fraction_to_tp2: 0.5   # половина пути к tp2 переносит стоп в безубыток
+  second_entry: false                 # v1: второго входа нет
+  fee_taker_pct: 0.05
+
+backtest:
+  start: "2024-11-01"
+  end: "2026-10-31"
+  train_days: 90
+  test_days: 30
+  min_strength_grid: [0.5, 0.6, 0.7]
+  min_trades_train: 8
+
+schedule:
+  daily_note_hour_utc: 13
+  weekly_day: 6                # воскресенье
+  weekly_hour_utc: 15
+
+dashboard:
+  host: 127.0.0.1
+  port: 8787
+
+bloggers:
+  zone_expiry_days: 14
+  zone_merge_pct: 0.5

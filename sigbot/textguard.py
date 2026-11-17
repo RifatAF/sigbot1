@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import re
 
-NUM_RE = re.compile(r"(?<![\w.])[-+]?\d[\d,]*(?:\.\d+)?")
+# число не внутри слова (TP1, 1000PEPE, 4h); префикс x (плечо x25) и суффикс R (+1.5R) проверяются
+NUM_RE = re.compile(r"(?<![A-WYZa-wyz0-9_.])[-+]?\d[\d,]*(?:\.\d+)?(?![A-QS-Za-z0-9])")
 
 
 class NumberMismatch(Exception):
