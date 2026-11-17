@@ -33,7 +33,7 @@ async def _guard(name, coro_fn):
             await asyncio.sleep(10)
 
 
-async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None):
+async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
     """Скан в :02 каждого часа, ведение сделок каждую минуту, ежедневная заметка, недельные посты."""
     last_scan_hour = settings.get(conn, "sched_last_scan_hour", 0)
     while True:
@@ -60,6 +60,12 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None):
                     await port.run_daily(now, syms)
                 except Exception as e:
                     log.exception("portfolio: %s", e)
+            if lst and eff.get("listings", {}).get("enabled") and not eff["publishing"].get("kill_switch") \
+                    and time.gmtime(now / 1000).tm_hour in (0, 6, 12, 18):
+                try:
+                    await lst.run_daily(now)
+                except Exception as e:
+                    log.exception("listings: %s", e)
             h_utc = time.gmtime(now / 1000).tm_hour
             wday = time.gmtime(now / 1000).tm_wday
             day = now // DAY
@@ -86,12 +92,15 @@ async def run(cfg, conn):
     live = Live(cfg, conn, pub, llm, bl)
     from .portfolio import LivePortfolio
     port = LivePortfolio(cfg, conn, pub)
+    from .listings import ListingShorts
+    from .sources import Binance
+    lst = ListingShorts(cfg, conn, pub, Binance(http))
     col = Collector(cfg, conn, http)
 
     runner = await dashboard.serve(cfg, conn)
     log.info("dashboard on http://%s:%s", cfg["dashboard"]["host"], cfg["dashboard"]["port"])
     tasks = [asyncio.create_task(_guard(fn.__name__, fn)) for fn in col.tasks()]
-    tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port))))
+    tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port, lst))))
     if tg and owner:
         from .admin import Admin
         admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col)

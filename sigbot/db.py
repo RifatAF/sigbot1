@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS portfolio_weights (
 CREATE TABLE IF NOT EXISTS portfolio_equity (
     day INTEGER PRIMARY KEY, equity REAL, pnl_pct REAL, gross REAL
 );
+CREATE TABLE IF NOT EXISTS listing_trades (
+    symbol TEXT PRIMARY KEY, onboard_ts INTEGER, entry_ts INTEGER, entry REAL, stop REAL, exit_due_ts INTEGER,
+    notional_pct REAL, status TEXT, exit_ts INTEGER, exit_price REAL, exit_reason TEXT, pnl_pct REAL
+);
 CREATE TABLE IF NOT EXISTS funding (
     symbol TEXT, ts INTEGER, rate REAL,
     PRIMARY KEY (symbol, ts)

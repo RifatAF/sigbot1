@@ -202,3 +202,24 @@ def portfolio(w: dict, opened: list[str], closed: list[str], total_pct: float, d
               "Trend following across daily channels and moving averages, sized by volatility. Not financial advice."
               + _tag(mode)]
     return "\n".join(lines), f.numbers
+
+
+def listing_signal(symbol: str, entry: float, stop: float, lc: dict, mode: str) -> tuple[str, list[float]]:
+    f = Fmt()
+    lines = [f"🔴 <b>{_coin(symbol)} SHORT</b>  #{_coin(symbol)} · new listing", "",
+             f"Entry: <b>{f.p(entry)}</b>",
+             f"Stop: {f.p(stop)} (+{f.i(lc['stop_pct'])}%)",
+             f"Exit: after {f.i(lc['hold_days'])} days or at the stop",
+             f"Size: {f.n(lc['notional_pct'], 1)}% of capital, no leverage needed", "",
+             "Most new perpetual listings drift lower in their first two months as supply unlocks. "
+             "A few explode upward, so the stop is wide and the size is small. Not financial advice." + _tag(mode)]
+    return "\n".join(lines), f.numbers
+
+
+def listing_exit(symbol: str, entry: float, price: float, reason: str, pnl_pct: float, mode: str) -> tuple[str, list[float]]:
+    f = Fmt()
+    head = "❌ Stopped out" if reason == "stop" else "⏱ Time exit"
+    lines = [f"{head}: <b>{_coin(symbol)} SHORT</b> (new listing)",
+             f"Entry {f.p(entry)} → exit {f.p(price)}",
+             f"Result: {f.n(pnl_pct, 2, sign=True)}% of capital" + _tag(mode)]
+    return "\n".join(lines), f.numbers

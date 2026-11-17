@@ -41,6 +41,13 @@ class Binance:
         rows.sort(key=lambda t: float(t["quoteVolume"]), reverse=True)
         return [t["symbol"] for t in rows[:top_n]]
 
+    async def perp_listings(self, quote: str = "USDT") -> list[tuple[str, int]]:
+        """Все торгуемые USDT перпетуалы с датой листинга (onboardDate, мс)."""
+        await FUT_LIMIT.acquire(1)
+        info = await self.http.get_json(f"{FAPI}/fapi/v1/exchangeInfo")
+        return [(x["symbol"], int(x.get("onboardDate", 0))) for x in info["symbols"]
+                if x.get("contractType") == "PERPETUAL" and x.get("quoteAsset") == quote and x.get("status") == "TRADING"]
+
     async def klines(self, symbol: str, market: str, interval: str, start_ms: int | None = None,
                      limit: int = 1000) -> list[tuple]:
         if market == "futures":

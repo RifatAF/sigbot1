@@ -1,4 +1,4 @@
-params_version: "v5"
+params_version: "v6"
 
 universe:
   top_n: 30
@@ -110,6 +110,13 @@ portfolio:
   target_vol: 0.5              # целевая годовая волатильность портфеля (0.4 спокойнее, 0.6 агрессивнее)
   max_gross: 3.0               # потолок суммарного плеча
   post_hour_utc: 0             # пересчёт сразу после закрытия суток
+
+listings:
+  enabled: true
+  notional_pct: 1.5            # шорт на каждый новый листинг, % капитала (убыток по стопу ~0.75%)
+  stop_pct: 50                 # стоп при росте на 50% от входа
+  hold_days: 60
+  max_entry_delay_days: 2      # если бот узнал о листинге позже, сделка пропускается
 
 trade:
   tp1_close_fraction: 0.5
