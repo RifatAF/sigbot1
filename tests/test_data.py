@@ -112,4 +112,4 @@ def test_features_liquidations_used_when_recorded(conn):
 def test_settings_override(cfg, conn):
     settings.put(conn, "risk.risk_max_pct", 1.2)
     eff = settings.effective(cfg, conn)
-    assert eff["risk"]["risk_max_pct"] == 1.2 and cfg["risk"]["risk_max_pct"] == 1.5
+    assert eff["risk"]["risk_max_pct"] == 1.2 and cfg["risk"]["risk_max_pct"] == 12.0

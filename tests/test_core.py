@@ -171,7 +171,7 @@ def test_llm_comment_no_digits():
 
 def test_risk_guard_throttles_and_caps(cfg):
     from sigbot import risk
-    rc = dict(cfg["risk"], max_open_trades=3, max_open_risk_pct=3.0, dd_half_pct=10, dd_pause_pct=20,
+    rc = dict(cfg["risk"], risk_min_pct=0.5, risk_max_pct=1.5, max_open_trades=3, max_open_risk_pct=3.0, dd_half_pct=10, dd_pause_pct=20,
               loss_streak=3, min_stop_pct=1.5)
     assert risk.guard(rc, [1, 1], []).multiplier == 1.0
     assert risk.guard(rc, [5, -12], []).multiplier == 0.5                    # просадка больше 10%

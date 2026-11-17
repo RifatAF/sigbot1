@@ -1,4 +1,4 @@
-params_version: "v3"
+params_version: "v4"
 
 universe:
   top_n: 30
@@ -16,16 +16,16 @@ publishing:
 
 risk:
   deposit_usd: 1000
-  risk_min_pct: 0.5
-  risk_max_pct: 1.5
+  risk_min_pct: 5.0
+  risk_max_pct: 12.0
   public_leverage_cap: 25
   personal_leverage_cap: 10
   maintenance_margin_pct: 0.5
   # портфельный предохранитель
   max_open_trades: 3
-  max_open_risk_pct: 3.0
-  dd_half_pct: 10          # просадка от пика: риск вдвое меньше
-  dd_pause_pct: 20         # новые входы стоп, владельцу уведомление
+  max_open_risk_pct: 36.0
+  dd_half_pct: 30          # просадка от пика: риск вдвое меньше
+  dd_pause_pct: 50         # новые входы стоп, владельцу уведомление
   dd_pause_days: 7         # длина паузы, потом просадка считается от нового пика
   loss_streak: 3           # серия убытков подряд: риск вдвое меньше
   min_stop_pct: 1.5        # стоп уже: комиссия больше ~0.1R, сигнал не берётся
