@@ -183,3 +183,18 @@ def test_capitulation_setup(cfg):
     assert c.tp2 == pytest.approx(100 * (1 + cc["target_sigma"] * 0.04)) and c.tp1 < c.tp2
     assert c.strength == pytest.approx(0.75)
     assert engine.decide(prepared_row(mom24=-2.0, sigma24=0.04), 299, "X", cfg) is None   # падение мало
+
+
+def test_trend_setup_daily_cross(cfg):
+    cfg["engine"]["setup"] = ["capitulation", "trend"]
+    n = 24 * 80
+    closes = np.r_[np.full(24 * 60, 100.0), np.linspace(100, 130, 24 * 20)]
+    p = pd.DataFrame({"ts": np.arange(n) * HOUR, "close": closes, "high": closes + 0.5, "low": closes - 0.5})
+    t = engine.daily_trend(p, cfg["trend"])
+    hits = np.flatnonzero(t.trend_cross.to_numpy() != 0)
+    assert len(hits) >= 1 and all((p.ts.iloc[i] + HOUR) % 86_400_000 == 0 for i in hits)   # только закрытие суток
+    q = prepared_row(n=len(p))
+    q["trend_cross"] = t.trend_cross.to_numpy(); q["atr_d"] = 2.0; q["mom24"] = 0.0; q["sigma24"] = 0.02
+    c = engine.decide(q, int(hits[0]), "BTCUSDT", cfg)
+    assert c.side == "long" and c.features["setup"] == "trend" and c.stop == pytest.approx(100 - 4.0)
+    assert c.features["manage"]["trail"] == pytest.approx(6.0) and c.features["manage"]["tp1_frac"] == 0

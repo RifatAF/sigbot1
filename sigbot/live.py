@@ -137,8 +137,17 @@ class Live:
     def _state(self, o: dict) -> TradeState:
         f = json.loads(o["features_json"])
         events = [r["event"] for r in self.conn.execute("SELECT event FROM outcomes WHERE signal_id=?", (o["id"],))]
+        m = f.get("manage", {})
         st = TradeState(o["side"], o["entry"], o["cur_stop"], f.get("invalidation", o["stop"]), o["tp1"], o["tp2"],
-                        o["ts"], remaining=o["remaining"], be_moved=bool(o["be_moved"]), tp1_done="tp1" in events)
+                        o["ts"], remaining=o["remaining"], be_moved=bool(o["be_moved"]), tp1_done="tp1" in events,
+                        trail=m.get("trail", 0.0), max_hold_h=m.get("max_hold_h"), tp1_frac=m.get("tp1_frac"),
+                        use_breakeven=m.get("breakeven", True))
+        st.trailed = "trail" in events
+        if st.trail:
+            prev = self.conn.execute("SELECT ts, close FROM candles WHERE symbol=? AND market='futures' AND tf='1m' "
+                                     "AND ts<? ORDER BY ts DESC LIMIT 1", (o["symbol"], o["last_ts"])).fetchone()
+            if prev:
+                st.last_day, st.last_close = prev[0] // 86_400_000, prev[1]
         return st
 
     async def manage(self, t: int | None = None):
@@ -175,6 +184,8 @@ class Live:
         if st.status == "closed":
             total = self.conn.execute("SELECT COALESCE(SUM(pnl_r),0) FROM outcomes WHERE signal_id=?",
                                       (o["id"],)).fetchone()[0]
+        if ev.event == "trail":
+            return   # трейлинг подтягивается каждые сутки: в журнал, без поста
         text, nums = templates.update(o, ev.event, ev.price, total)
         await self.pub.publish("update", text, nums, o["id"])
 

@@ -88,3 +88,17 @@ def test_correlated_same_side_is_one_bet():
     assert [c.symbol for c in out] == ["B"]
     # уже открыта сделка по символу
     assert scanner.select([_c("A", "short", 0.8)], [("A", "long")], 0, 5, corr, 0.8) == []
+
+
+def test_trailing_stop_from_daily_close(cfg):
+    from sigbot.trade import TradeState, step
+    DAY, H = 86_400_000, 3_600_000
+    st = TradeState("long", 100, 90, 90, 130, 130, 0, trail=5.0, max_hold_h=24 * 45, tp1_frac=0.0, use_breakeven=False)
+    step(st, 23 * H, 101, 99, 100, cfg)                 # сутки 0 закрылись на 100
+    step(st, DAY, 111, 104, 110, cfg)                   # первый бар суток 1: стоп от закрытия 100 -> 95
+    assert st.stop == 95 and st.status == "open"
+    step(st, DAY + 23 * H, 121, 115, 120, cfg)          # сутки 1 закрылись на 120
+    step(st, 2 * DAY, 121, 116, 118, cfg)               # стоп -> 115
+    assert st.stop == 115
+    ev = step(st, 2 * DAY + H, 117, 114, 114, cfg)
+    assert st.status == "closed" and ev[-1].event == "trail_stop" and ev[-1].price == 115

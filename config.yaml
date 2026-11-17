@@ -1,4 +1,4 @@
-params_version: "v2"
+params_version: "v3"
 
 universe:
   top_n: 30
@@ -72,7 +72,7 @@ llm:
   timeout_s: 60
 
 engine:
-  setup: capitulation          # capitulation (v2) | divergence (v1)
+  setup: [capitulation, trend]   # capitulation, trend, divergence (v1); можно списком
   min_divergence_score: 1.0    # одна регулярная или две скрытые дивергенции
   min_index: 0.0               # индекс не против сделки
   stop_atr_buffer: 0.3
@@ -89,6 +89,15 @@ capitulation:
   stop_sigma: 3.0
   tp1_sigma: 1.25
   target_sigma: 2.5
+
+trend:
+  ma_fast: 20                  # дневные MA
+  ma_slow: 50
+  stop_atr: 2.0                # стоп в дневных ATR
+  trail_atr: 3.0               # трейлинг от дневного закрытия
+  max_hold_days: 45
+  ref_target_r: 3.0            # ориентир цели в посте, выход трейлингом
+  strength: 0.0                # риск по нижней границе
 
 trade:
   tp1_close_fraction: 0.5

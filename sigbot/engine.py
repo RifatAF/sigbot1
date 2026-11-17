@@ -125,7 +125,59 @@ def prepare(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     if "oi" in df:
         oi = df.oi.where(df.oi > 0)
         out["doi24"] = np.log(oi / oi.shift(24)) / out.sigma24
-    return out.join(dv)
+    out = out.join(dv)
+    tc = cfg.get("trend")
+    if tc:
+        out = out.join(daily_trend(out, tc))
+    return out
+
+
+def daily_trend(h: pd.DataFrame, tc: dict) -> pd.DataFrame:
+    """Дневные MA и ATR из часовых свечей. Значение суток видно только на часовом баре,
+    который закрывает сутки (23:00 UTC), поэтому заглядывания вперёд нет."""
+    day = (h.ts // 86_400_000).to_numpy()
+    d = pd.DataFrame({"day": day, "high": h.high.to_numpy(), "low": h.low.to_numpy(), "close": h.close.to_numpy()})
+    g = d.groupby("day").agg(high=("high", "max"), low=("low", "min"), close=("close", "last"))
+    pc = g.close.shift(1)
+    tr = pd.concat([g.high - g.low, (g.high - pc).abs(), (g.low - pc).abs()], axis=1).max(axis=1)
+    g["atr_d"] = tr.ewm(alpha=1 / 14, adjust=False).mean()
+    f, sl = g.close.rolling(tc["ma_fast"]).mean(), g.close.rolling(tc["ma_slow"]).mean()
+    g["cross"] = np.where((f > sl) & (f.shift() <= sl.shift()), 1, np.where((f < sl) & (f.shift() >= sl.shift()), -1, 0))
+    last_bar = (h.ts.to_numpy() + 3_600_000) % 86_400_000 == 0
+    cross = pd.Series(day).map(g.cross).to_numpy()
+    atr_d = pd.Series(day).map(g.atr_d).to_numpy()
+    return pd.DataFrame({"trend_cross": np.where(last_bar, cross, 0), "atr_d": atr_d}, index=h.index)
+
+
+def decide_trend(p: pd.DataFrame, i: int, symbol: str, cfg: dict) -> Candidate | None:
+    """Дневной тренд: пересечение MA быстрая/медленная, лонг и шорт. Стоп k ATR суток, выход трейлингом
+    от дневного закрытия или по времени, фиксированной цели нет (TP показывается как ориентир)."""
+    tc = cfg["trend"]
+    row = p.iloc[i]
+    side_n = int(row.get("trend_cross", 0) or 0)
+    a = float(row.get("atr_d", np.nan))
+    if side_n == 0 or not np.isfinite(a) or a <= 0:
+        return None
+    side = "long" if side_n > 0 else "short"
+    entry = float(row.close)
+    stop = entry - side_n * tc["stop_atr"] * a
+    r = abs(entry - stop)
+    tp = entry + side_n * tc["ref_target_r"] * r
+    feats = {"setup": "trend", "divergences": list(row.labels), "trend_4h": int(row.trend),
+             "rsi": round(float(row.rsi), 2), "atr": float(row.atr), "atr_daily": a,
+             "ma": [tc["ma_fast"], tc["ma_slow"]], "trail_atr": tc["trail_atr"],
+             "funding": None if "funding" not in p else float(row.funding),
+             "fear_greed": None if not np.isfinite(row.get("fear_greed", np.nan)) else int(row.fear_greed),
+             "tp2_from_liq_cluster": False,
+             "manage": {"trail": tc["trail_atr"] * a, "max_hold_h": tc["max_hold_days"] * 24, "tp1_frac": 0.0,
+                        "breakeven": False}}
+    return Candidate(symbol, int(row.ts), side, entry, float(stop), float(stop), float(tp), float(tp),
+                     float(tc["strength"]), feats)
+
+
+def setups(cfg: dict) -> list[str]:
+    s = cfg.get("engine", {}).get("setup", "divergence")
+    return list(s) if isinstance(s, (list, tuple)) else [s]
 
 
 def decide_capitulation(p: pd.DataFrame, i: int, symbol: str, cfg: dict) -> Candidate | None:
@@ -157,8 +209,20 @@ def decide_capitulation(p: pd.DataFrame, i: int, symbol: str, cfg: dict) -> Cand
 
 def decide(p: pd.DataFrame, i: int, symbol: str, cfg: dict, min_strength: float | None = None,
            liq_clusters: dict | None = None) -> Candidate | None:
-    if cfg.get("engine", {}).get("setup") == "capitulation":
-        return decide_capitulation(p, i, symbol, cfg)
+    st = setups(cfg)
+    if st != ["divergence"]:
+        for name in st:
+            fn = {"capitulation": decide_capitulation, "trend": decide_trend,
+                  "divergence": lambda *a: decide_divergence(*a, min_strength=min_strength, liq_clusters=liq_clusters)}[name]
+            c = fn(p, i, symbol, cfg)
+            if c is not None and (name != "capitulation" or c.strength >= (min_strength or 0)):
+                return c
+        return None
+    return decide_divergence(p, i, symbol, cfg, min_strength, liq_clusters)
+
+
+def decide_divergence(p: pd.DataFrame, i: int, symbol: str, cfg: dict, min_strength: float | None = None,
+                      liq_clusters: dict | None = None) -> Candidate | None:
     ec = cfg["engine"]
     row = p.iloc[i]
     if i < cfg["indicators"]["zscore_window"] or not np.isfinite(row.atr) or row.atr <= 0:

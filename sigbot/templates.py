@@ -53,8 +53,8 @@ def signal(sig: dict, comment: str = "", zones: list[dict] | None = None) -> tup
         "",
         f"Entry: <b>{f.p(sig['entry'])}</b>",
         f"Stop: {f.p(sig['stop'])}",
-        f"TP1: {f.p(sig['tp1'])} (close {f.i(50)}%)",
-        f"TP2: {f.p(sig['tp2'])}",
+        *([f"Reference target: {f.p(sig['tp2'])} (exit by trailing stop)"] if feats.get("setup") == "trend" else
+          [f"TP1: {f.p(sig['tp1'])} (close {f.i(50)}%)", f"TP2: {f.p(sig['tp2'])}"]),
         "",
         f"Risk: {f.n(sig['risk_pct'])}% of deposit · effective leverage x{f.n(sig['leverage'], 1)}",
         f"Strength: {f.n(sig['strength'])}",
@@ -62,6 +62,10 @@ def signal(sig: dict, comment: str = "", zones: list[dict] | None = None) -> tup
     if feats.get("setup") == "capitulation" and feats.get("drop_sigma") is not None:
         lines.append(f"Setup: rebound after a liquidation flush, 24h drop {f.n(feats['drop_sigma'], 1)} sigma, "
                      "open interest flushed")
+    if feats.get("setup") == "trend":
+        ma = feats.get("ma", [20, 50])
+        lines.append(f"Setup: daily trend, MA{f.i(ma[0])} crossed {'above' if sig['side'] == 'long' else 'below'} "
+                     f"MA{f.i(ma[1])}, holding days to weeks")
     if feats.get("divergences"):
         lines.append(f"Divergences: {escape(_div_human(feats['divergences']), quote=False)}")
     trend = {1: "up", -1: "down", 0: "flat"}.get(feats.get("trend_4h"), "n/a")
@@ -75,7 +79,11 @@ def signal(sig: dict, comment: str = "", zones: list[dict] | None = None) -> tup
         lines.append("Watch zones from tracked analysts (not used for entry): " + "; ".join(z))
     if comment:
         lines += ["", escape(comment, quote=False)]
-    lines.append("\nStop moves to breakeven halfway to TP2. Not financial advice." + _tag(sig.get("mode", "")))
+    if feats.get("setup") == "trend":
+        lines.append(f"\nExit: trailing stop {f.n(feats['trail_atr'], 1)} daily ATR from the daily close, "
+                     "TP is a reference only. Not financial advice." + _tag(sig.get("mode", "")))
+    else:
+        lines.append("\nStop moves to breakeven halfway to TP2. Not financial advice." + _tag(sig.get("mode", "")))
     return "\n".join(lines), f.numbers
 
 
@@ -85,6 +93,7 @@ EVENT_TEXT = {
     "tp2": "TP2 hit, position closed",
     "stop": "Stopped out",
     "breakeven_stop": "Closed at breakeven",
+    "trail_stop": "Trailing stop hit, position closed",
     "invalidation": "Idea invalidated, closed",
     "timeout": "Time exit, closed",
     "manual": "Closed",
@@ -93,7 +102,7 @@ EVENT_TEXT = {
 
 def update(sig: dict, event: str, price: float, r_total: float | None = None) -> tuple[str, list[float]]:
     f = Fmt()
-    icon = {"tp1": "✅", "tp2": "🎯", "stop": "❌", "breakeven": "🛡", "breakeven_stop": "➖",
+    icon = {"tp1": "✅", "tp2": "🎯", "stop": "❌", "breakeven": "🛡", "breakeven_stop": "➖", "trail_stop": "🎯",
             "invalidation": "⚠️", "timeout": "⏱"}.get(event, "•")
     lines = [f"{icon} <b>{_coin(sig['symbol'])} {sig['side'].upper()}</b>: {EVENT_TEXT.get(event, event)}",
              f"Price: {f.p(price)}"]
@@ -148,8 +157,10 @@ def method(cfg: dict, bt: dict | None) -> tuple[str, list[float]]:
         "• Inputs: open interest, funding, futures and spot CVD, liquidations, Coinbase premium, Fear &amp; Greed.",
         ("• Entries: long after a liquidation flush (a sharp 24h drop with open interest falling), "
          "wide stop, short target, exit by time. Divergences are shown as context."
-         if cfg["engine"].get("setup") == "capitulation" else
+         if "capitulation" in str(cfg["engine"].get("setup")) else
          "• Entries need bullish or bearish divergences (RSI, CVD, open interest) in line with the 4h trend."),
+        *(["• Trend trades: daily MA20/MA50 cross, long and short, trailing stop from the daily close, "
+           "held from days to weeks."] if "trend" in str(cfg["engine"].get("setup")) else []),
         f"• Risk per trade: {f.n(rc['risk_min_pct'], 1)}% to {f.n(rc['risk_max_pct'], 1)}% of deposit, "
         f"leverage capped at x{f.i(rc['public_leverage_cap'])}.",
         "• Management: half closed at TP1, stop to breakeven halfway to TP2, exit if the idea breaks. No averaging down.",

@@ -13,7 +13,7 @@ import pandas as pd
 
 from . import engine, features, ledger, risk, scanner
 from . import indicators as ind
-from .trade import TradeState, pnl_pct, step
+from .trade import TradeState, pnl_pct, state_from, step
 
 log = logging.getLogger(__name__)
 HOUR = 3_600_000
@@ -65,16 +65,21 @@ def candidates(prep: dict[str, pd.DataFrame], cfg, min_strength: float) -> dict[
     by_ts: dict[int, list] = {}
     floor = cfg["engine"]["min_divergence_score"]
     for sym, p in prep.items():
-        if cfg["engine"].get("setup") == "capitulation":
-            idx = np.flatnonzero(p.mom24.to_numpy() <= -cfg["capitulation"]["min_drop_sigma"])
-        else:
-            idx = np.flatnonzero((p.bull.to_numpy() >= floor) | (p.bear.to_numpy() >= floor))
+        st = engine.setups(cfg)
+        m = np.zeros(len(p), bool)
+        if "capitulation" in st:
+            m |= p.mom24.to_numpy() <= -cfg["capitulation"]["min_drop_sigma"]
+        if "trend" in st:
+            m |= p.trend_cross.to_numpy() != 0
+        if "divergence" in st:
+            m |= (p.bull.to_numpy() >= floor) | (p.bear.to_numpy() >= floor)
+        idx = np.flatnonzero(m)
         for i in idx:
             c = engine.decide(p, int(i), sym, cfg, min_strength=min_strength)
             if c is None:
                 continue
             lo = max(0, i - 720)
-            if c.features.get("setup") != "capitulation" and "oi" in p and p.oi.iloc[lo:i + 1].notna().sum() > 24:
+            if c.features.get("setup") is None and "oi" in p and p.oi.iloc[lo:i + 1].notna().sum() > 24:
                 lm = ind.liquidation_map(p.close.iloc[lo:i + 1], p.oi.iloc[lo:i + 1].ffill().fillna(0),
                                          cfg["liq_map"]["leverages"], cfg["liq_map"]["bin_pct"])
                 c2 = engine.decide(p, int(i), sym, cfg, min_strength=min_strength,
@@ -136,7 +141,7 @@ def simulate(prep, cands_by_ts, cfg, start_ms, end_ms, deposit=1000.0) -> list[B
                 sz = risk.size_guarded(c.entry, c.stop, c.side, c.strength, equity, rc, g, orisk)
                 if sz is None:
                     continue
-                st = TradeState(c.side, c.entry, c.stop, c.invalidation, c.tp1, c.tp2, c.ts)
+                st = state_from(c)
                 open_[c.symbol] = (st, c, sz, equity, 0.0)
                 per_day[day] = per_day.get(day, 0) + 1
         if t > end_ms and not open_:
