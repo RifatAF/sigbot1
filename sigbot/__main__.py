@@ -76,6 +76,18 @@ def cmd_backtest(cfg, conn, args):
     print(f"report: {path}")
 
 
+def cmd_portfolio(cfg, conn, args):
+    from pathlib import Path
+    from . import portfolio
+    r = portfolio.backtest(conn, cfg, args.start or "2020-07-01", args.end or "2026-11-01")
+    md = portfolio.to_markdown(r)
+    Path("reports").mkdir(exist_ok=True)
+    out = Path("reports") / f"portfolio_{args.start or '2020-07-01'}_{args.end or '2026-11-01'}.md"
+    out.write_text(md)
+    print(md)
+    print(f"report: {out}")
+
+
 def cmd_export(cfg, conn, args):
     for p in ledger.export_csv(conn, args.out):
         print(p)
@@ -115,6 +127,9 @@ def main(argv=None):
     t.add_argument("--symbols")
     t.add_argument("--start")
     t.add_argument("--end")
+    pf = sub.add_parser("portfolio", help="бэктест трендового портфеля")
+    pf.add_argument("--start")
+    pf.add_argument("--end")
     e = sub.add_parser("export", help="журнал в CSV")
     e.add_argument("--out", default="export")
     sub.add_parser("health", help="состояние сборщика")
@@ -128,6 +143,8 @@ def main(argv=None):
         asyncio.run(cmd_backfill(cfg, conn, args))
     elif args.cmd == "backtest":
         cmd_backtest(cfg, conn, args)
+    elif args.cmd == "portfolio":
+        cmd_portfolio(cfg, conn, args)
     elif args.cmd == "export":
         cmd_export(cfg, conn, args)
     elif args.cmd == "health":

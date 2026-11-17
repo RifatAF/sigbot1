@@ -1,4 +1,4 @@
-params_version: "v4"
+params_version: "v5"
 
 universe:
   top_n: 30
@@ -98,6 +98,18 @@ trend:
   max_hold_days: 45
   ref_target_r: 3.0            # ориентир цели в посте, выход трейлингом
   strength: 0.0                # риск по нижней границе
+
+portfolio:
+  enabled: true
+  top_n: 30                    # универсум: топ по обороту
+  donchian: [10, 20, 40, 80, 160]
+  ma_fast: 20
+  ma_slow: 50
+  allow_short: true
+  vol_window: 30
+  target_vol: 0.5              # целевая годовая волатильность портфеля (0.4 спокойнее, 0.6 агрессивнее)
+  max_gross: 3.0               # потолок суммарного плеча
+  post_hour_utc: 0             # пересчёт сразу после закрытия суток
 
 trade:
   tp1_close_fraction: 0.5

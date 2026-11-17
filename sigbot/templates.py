@@ -173,3 +173,32 @@ def method(cfg: dict, bt: dict | None) -> tuple[str, list[float]]:
                       f"max drawdown {f.n(t['max_drawdown_pct'], 1)}%."]
     lines += ["", "Not financial advice. Past results do not guarantee future results."]
     return "\n".join(lines), f.numbers
+
+
+def portfolio(w: dict, opened: list[str], closed: list[str], total_pct: float, day_pct: float, pc: dict,
+              mode: str, full: bool = False) -> tuple[str, list[float]]:
+    """Пост трендового портфеля: что открылось, что закрылось, при full весь состав."""
+    f = Fmt()
+    lines = ["🧭 <b>Trend portfolio</b>", ""]
+    def row(s):
+        side = "LONG" if w[s] > 0 else "SHORT"
+        return f"{_coin(s)} {side} {f.n(abs(w[s]) * 100, 1)}%"
+    if opened:
+        lines.append("Opened: " + ", ".join(row(s) for s in sorted(opened, key=lambda x: -abs(w[x]))))
+    if closed:
+        lines.append("Closed: " + ", ".join(_coin(s) for s in sorted(closed)))
+    if full:
+        longs = sorted([s for s in w if w[s] > 0], key=lambda x: -w[x])
+        shorts = sorted([s for s in w if w[s] < 0], key=lambda x: w[x])
+        if opened or closed:
+            lines.append("")
+        lines.append("🟢 " + (", ".join(row(s) for s in longs) if longs else "no longs"))
+        lines.append("🔴 " + (", ".join(row(s) for s in shorts) if shorts else "no shorts"))
+    gross = sum(abs(x) for x in w.values())
+    lines += ["", f"Exposure: {f.n(gross * 100, 0)}% of capital · target volatility {f.i(pc['target_vol'] * 100)}% a year",
+              f"Portfolio since start: {f.n(total_pct, 2, sign=True)}% · last day {f.n(day_pct, 2, sign=True)}%",
+              "",
+              "Weights are % of capital per coin, rebalanced daily at the daily close. "
+              "Trend following across daily channels and moving averages, sized by volatility. Not financial advice."
+              + _tag(mode)]
+    return "\n".join(lines), f.numbers

@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS basis (
     symbol TEXT, ts INTEGER, basis REAL,
     PRIMARY KEY (symbol, ts)
 );
+CREATE TABLE IF NOT EXISTS portfolio_weights (
+    day INTEGER, symbol TEXT, weight REAL, PRIMARY KEY (day, symbol)
+);
+CREATE TABLE IF NOT EXISTS portfolio_equity (
+    day INTEGER PRIMARY KEY, equity REAL, pnl_pct REAL, gross REAL
+);
 CREATE TABLE IF NOT EXISTS funding (
     symbol TEXT, ts INTEGER, rate REAL,
     PRIMARY KEY (symbol, ts)

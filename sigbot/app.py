@@ -33,7 +33,7 @@ async def _guard(name, coro_fn):
             await asyncio.sleep(10)
 
 
-async def scheduler(cfg, conn, live: Live, pub: Publisher):
+async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None):
     """Скан в :02 каждого часа, ведение сделок каждую минуту, ежедневная заметка, недельные посты."""
     last_scan_hour = settings.get(conn, "sched_last_scan_hour", 0)
     while True:
@@ -52,6 +52,14 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher):
                 log.exception("scan: %s", e)
             eff = settings.effective(cfg, conn)
             sc = eff["schedule"]
+            if port and eff.get("portfolio", {}).get("enabled") and not eff["publishing"].get("kill_switch") \
+                    and (time.gmtime(now / 1000).tm_hour - eff["portfolio"].get("post_hour_utc", 0)) % 24 < 3:
+                # три попытки: если часовая свеча 23:00 ещё не пришла, пересчёт через час (повтор за те же сутки не считается)
+                syms = settings.get(conn, "symbols_manual") or settings.get(conn, "universe", [])
+                try:
+                    await port.run_daily(now, syms)
+                except Exception as e:
+                    log.exception("portfolio: %s", e)
             h_utc = time.gmtime(now / 1000).tm_hour
             wday = time.gmtime(now / 1000).tm_wday
             day = now // DAY
@@ -76,12 +84,14 @@ async def run(cfg, conn):
     pub = Publisher(cfg, conn, tg, channel, owner)
     bl = Bloggers(cfg, conn)
     live = Live(cfg, conn, pub, llm, bl)
+    from .portfolio import LivePortfolio
+    port = LivePortfolio(cfg, conn, pub)
     col = Collector(cfg, conn, http)
 
     runner = await dashboard.serve(cfg, conn)
     log.info("dashboard on http://%s:%s", cfg["dashboard"]["host"], cfg["dashboard"]["port"])
     tasks = [asyncio.create_task(_guard(fn.__name__, fn)) for fn in col.tasks()]
-    tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub))))
+    tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port))))
     if tg and owner:
         from .admin import Admin
         admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col)
