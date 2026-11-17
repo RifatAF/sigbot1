@@ -54,3 +54,9 @@ liq_map:
 
 storage:
   db_path: data/sigbot.sqlite
+
+llm:
+  # ключ GEMINI_API_KEY из .env; при ошибке или таймауте берётся запасная модель
+  model: gemini-flash-latest
+  fallback_model: gemini-flash-lite-latest
+  timeout_s: 60
