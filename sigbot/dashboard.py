@@ -150,7 +150,8 @@ def make_app(cfg, conn) -> web.Application:
         f = json.loads(r["features_json"])
         html = chart.build_html(r["symbol"], r["side"], chart.candles_from_df(df.reset_index(drop=True), 200),
                                 {k: r[k] for k in ("entry", "stop", "tp1", "tp2")}, f.get("attention_zones"),
-                                f.get("liq_clusters"), subtitle=f"#{sid} · risk {r['risk_pct']}% · x{r['leverage']}")
+                                f.get("liq_clusters"), subtitle=f"Signal #{sid}",
+                                risk_pct=r["risk_pct"], leverage=r["leverage"])
         return web.Response(body=await chart.render_png(html), content_type="image/png")
 
     async def health(_):

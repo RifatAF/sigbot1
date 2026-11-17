@@ -109,10 +109,11 @@ class Live:
         text, nums = templates.signal(d, comment, zones)
         png = None
         try:
-            html = chart.build_html(c.symbol, c.side, chart.candles_from_df(p, 120),
+            html = chart.build_html(c.symbol, c.side, chart.candles_from_df(p, 96),
                                     {"entry": c.entry, "stop": c.stop, "tp1": c.tp1, "tp2": c.tp2},
                                     zones, feats.get("liq_clusters"),
-                                    subtitle=f"Risk {sz.risk_pct}% · x{sz.leverage} · strength {c.strength}")
+                                    subtitle=f"Strength {c.strength:.2f}", risk_pct=sz.risk_pct,
+                                    leverage=sz.leverage)
             png = await chart.render_png(html)
         except Exception as e:
             log.warning("chart render failed: %s", e)
