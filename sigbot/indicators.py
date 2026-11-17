@@ -121,27 +121,28 @@ def liquidation_map(close: pd.Series, oi: pd.Series, leverages=(10, 25, 50, 100)
     и поровну по плечам. Уровень снимается, когда цена его прошла (позиции ликвидированы).
     Возвращает бины цены: long_usd (ниже цены), short_usd (выше цены).
     """
-    levels: list[list[float]] = []  # [price, usd, side(+1 long/-1 short)]
-    c = close.to_numpy()
-    d_oi = oi.diff().fillna(0).to_numpy()
-    lo_seen, hi_seen = c.copy(), c.copy()
-    for i in range(len(c)):
-        p = c[i]
-        if levels:
-            arr = np.array(levels)
-            alive = ~(((arr[:, 2] > 0) & (p <= arr[:, 0])) | ((arr[:, 2] < 0) & (p >= arr[:, 0])))
-            levels = arr[alive].tolist()
-        add = d_oi[i] * p
-        if add <= 0:
-            continue
-        per = add / (2 * len(leverages))
-        for lev in leverages:
-            mv = 1 / lev - mm_pct / 100
-            levels.append([p * (1 - mv), per, 1])
-            levels.append([p * (1 + mv), per, -1])
-    if not levels:
+    c = close.to_numpy(dtype=float)
+    add = np.clip(oi.diff().fillna(0).to_numpy(dtype=float), 0, None) * c
+    born = np.flatnonzero(add > 0)
+    if born.size == 0:
         return pd.DataFrame(columns=["price", "long_usd", "short_usd"])
-    arr = np.array(levels)
+    # уровень, рождённый на баре i, снимается, если цена на любом из следующих баров его прошла
+    suf_min = np.minimum.accumulate(c[::-1])[::-1]
+    suf_max = np.maximum.accumulate(c[::-1])[::-1]
+    nxt_min = np.append(suf_min[1:], np.inf)
+    nxt_max = np.append(suf_max[1:], -np.inf)
+    prices, usds, sides = [], [], []
+    for lev in leverages:
+        mv = 1 / lev - mm_pct / 100
+        per = add[born] / (2 * len(leverages))
+        lp, sp = c[born] * (1 - mv), c[born] * (1 + mv)
+        alive_l, alive_s = nxt_min[born] > lp, nxt_max[born] < sp
+        prices += [lp[alive_l], sp[alive_s]]
+        usds += [per[alive_l], per[alive_s]]
+        sides += [np.ones(alive_l.sum()), -np.ones(alive_s.sum())]
+    arr = np.column_stack([np.concatenate(prices), np.concatenate(usds), np.concatenate(sides)])
+    if not len(arr):
+        return pd.DataFrame(columns=["price", "long_usd", "short_usd"])
     ref = c[-1]
     step = ref * bin_pct / 100
     bins = np.round(arr[:, 0] / step) * step

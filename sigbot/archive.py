@@ -98,6 +98,11 @@ class Archive:
         for chunk in range(0, len(days), 32):
             res = await asyncio.gather(*(one(d) for d in days[chunk:chunk + 32]))
             data = [x for rows in res if rows for x in parse_metrics_rows(rows)]
+            # для истории хватает одного значения в час (последнее в часе)
+            hourly: dict[int, tuple] = {}
+            for x in data:
+                hourly[x[0] // 3_600_000] = x
+            data = list(hourly.values())
             self.conn.executemany("INSERT OR REPLACE INTO open_interest VALUES (?,?,?,?)",
                                   [(symbol, *x) for x in data])
             n += len(data)
