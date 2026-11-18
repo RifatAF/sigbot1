@@ -84,15 +84,19 @@ async def run(cfg, conn):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     channel = os.environ.get("TELEGRAM_CHANNEL_ID")
     owner = os.environ.get("TELEGRAM_OWNER_ID")
-    if os.environ.get("SIGBOT_ROLE", "main").lower() == "standby":
-        # запасной экземпляр: собирает данные и считает сигналы в свой журнал, но не пишет в канал и не слушает
-        # бота (два опроса одного токена Telegram конфликтуют, а два экземпляра дублировали бы посты)
-        log.warning("SIGBOT_ROLE=standby: Telegram выключен, только сбор данных и журнал")
-        token = channel = owner = None
     tg = Telegram(token, http) if token else None
     lc = cfg["llm"]
     llm = Gemini(os.environ.get("GEMINI_API_KEY"), http, lc["model"], lc["fallback_model"], lc["timeout_s"])
-    pub = Publisher(cfg, conn, tg, channel, owner)
+    leader = None
+    if tg and owner:
+        import socket
+        from .leader import Leader
+        leader = Leader(tg, int(owner), os.environ.get("SIGBOT_NAME") or socket.gethostname().lower())
+        try:
+            await leader.tick()
+        except Exception as e:
+            log.warning("leader: %s", e)
+    pub = Publisher(cfg, conn, tg, channel, owner, leader)
     bl = Bloggers(cfg, conn)
     live = Live(cfg, conn, pub, llm, bl)
     from .portfolio import LivePortfolio
@@ -108,9 +112,10 @@ async def run(cfg, conn):
     tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port, lst))))
     if tg and owner:
         from .admin import Admin
-        admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col)
+        admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col, leader)
         tasks.append(asyncio.create_task(_guard("admin", admin.loop)))
-        await pub.notify_owner("sigbot started. /menu for settings.")
+        tasks.append(asyncio.create_task(_guard("leader", leader.loop)))
+        await pub.notify_owner(f"sigbot started on {leader.name} as main. /menu for settings.")
     try:
         await asyncio.gather(*tasks)
     finally:

@@ -14,9 +14,13 @@ log = logging.getLogger(__name__)
 
 
 class Publisher:
-    def __init__(self, cfg, conn, tg: Telegram | None, channel_id, owner_id):
+    def __init__(self, cfg, conn, tg: Telegram | None, channel_id, owner_id, leader=None):
         self.cfg, self.conn, self.tg = cfg, conn, tg
         self.channel_id, self.owner_id = channel_id, owner_id
+        self.leader = leader          # не основной экземпляр пишет только в свой журнал
+
+    def _standby(self) -> bool:
+        return self.leader is not None and not self.leader.is_main
 
     def _eff(self):
         return settings.effective(self.cfg, self.conn)["publishing"]
@@ -38,6 +42,9 @@ class Publisher:
             await self.notify_owner(f"⛔ Post blocked by number check: {e}")
             return "blocked"
 
+        if self._standby():
+            self._log(kind, text, "standby", signal_id)
+            return "standby"
         p = self._eff()
         if p.get("kill_switch"):
             self._log(kind, text, "killed", signal_id)
@@ -93,7 +100,7 @@ class Publisher:
         return "dropped"
 
     async def notify_owner(self, text: str):
-        if self.tg and self.owner_id:
+        if self.tg and self.owner_id and not self._standby():
             try:
                 await self.tg.send_message(self.owner_id, text, parse_mode=None)
             except Exception as e:

@@ -19,7 +19,8 @@ def _round(x: float) -> float:
 
 class Admin:
     def __init__(self, cfg, conn, tg: Telegram, owner_id: int, publisher, live, llm, bloggers: Bloggers,
-                 collector=None):
+                 collector=None, leader=None):
+        self.leader = leader
         self.cfg, self.conn, self.tg, self.owner = cfg, conn, tg, int(owner_id)
         self.pub, self.live, self.llm, self.bl, self.collector = publisher, live, llm, bloggers, collector
 
@@ -226,6 +227,17 @@ class Admin:
         text = msg.get("text") or msg.get("caption") or ""
         if text.startswith("/start") or text.startswith("/menu"):
             return await self.show(chat, self.menu())
+        if text.startswith("/main") and self.leader:
+            parts = text.split()
+            if len(parts) < 2:
+                return await self.tg.send_message(chat, f"Main now: {self.leader.name}. Switch: /main <name>, "
+                                                        "name is SIGBOT_NAME of the other computer.", parse_mode=None)
+            target = parts[1].lower()
+            await self.leader.claim(target)
+            if target != self.leader.name:
+                self.leader.is_main = False
+            return await self.tg.send_message(chat, f"Main is now {target}. It takes over within a minute.",
+                                              parse_mode=None)
         if text.startswith("/coins"):
             arg = text[6:].strip()
             if arg.lower() == "auto" or not arg:
@@ -269,8 +281,11 @@ class Admin:
     async def loop(self):
         offset = settings.get(self.conn, "tg_offset")
         while True:
+            if self.leader and not self.leader.is_main:
+                await asyncio.sleep(20)          # команды слушает только основной экземпляр
+                continue
             try:
-                ups = await self.tg.get_updates(offset)
+                ups = await self.tg.get_updates(offset, timeout=20)
                 for u in ups:
                     offset = u["update_id"] + 1
                     settings.put(self.conn, "tg_offset", offset)
