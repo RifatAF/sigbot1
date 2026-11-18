@@ -19,6 +19,14 @@
     GEMINI_API_KEY=...
     DASHBOARD_TOKEN=придумай_длинную_строку   # необязательно, закрывает панель паролем
 
+## Windows (ноутбук)
+
+    git clone -b ccr-9a2bc6c9-qmjuwr https://github.com/RifatAF/sigbot1
+    cd sigbot1
+    install_windows.bat
+
+Скрипт ставит зависимости и Chromium, спрашивает токен Telegram и ключ Gemini (пишет их только в `.env`), грузит историю, создаёт задачу автозапуска при входе. `run_sigbot.bat` перед каждым стартом делает `git pull`: новые версии из этой ветки подхватываются сами при перезапуске. Лог: `sigbot.log`.
+
 ## Запуск
 
     python -m sigbot backfill       # история за период бэктеста (около 40 минут на 30 монет)
