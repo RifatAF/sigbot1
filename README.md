@@ -11,7 +11,7 @@
     pip install -r requirements.txt
     playwright install chromium          # для картинок сигналов
 
-Создай `.env` рядом с `config.yaml` (в git он не попадает):
+Создай `.env` командой `python -m sigbot setup` (спросит ключи, ID канала и владельца уже подставлены) или вручную рядом с `config.yaml` (в git он не попадает):
 
     TELEGRAM_BOT_TOKEN=...
     TELEGRAM_CHANNEL_ID=-1003595508596

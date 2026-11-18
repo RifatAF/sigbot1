@@ -13,14 +13,7 @@ python -m pip install --upgrade pip >nul
 python -m pip install -r requirements.txt || (echo Ошибка установки зависимостей & pause & exit /b 1)
 python -m playwright install chromium
 
-if not exist .env (
-  echo.
-  echo Ключи пишутся только в файл .env на этом компьютере.
-  set /p TG=Токен Telegram бота: 
-  set /p GM=Ключ Gemini: 
-  set /p NM=Имя этого компьютера латиницей (например pc или laptop): 
-  call :writeenv
-)
+python -m sigbot setup
 
 echo.
 echo Загрузка истории для бэктеста и портфеля (около 1-2 часов, можно оставить на ночь)...
@@ -34,12 +27,3 @@ echo Готово. Напишите боту /menu в Telegram.
 pause
 exit /b 0
 
-:writeenv
-(
-  echo TELEGRAM_BOT_TOKEN=%TG%
-  echo TELEGRAM_CHANNEL_ID=-1003595508596
-  echo TELEGRAM_OWNER_ID=569798955
-  echo GEMINI_API_KEY=%GM%
-  echo SIGBOT_NAME=%NM%
-) > .env
-exit /b 0

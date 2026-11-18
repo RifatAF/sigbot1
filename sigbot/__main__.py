@@ -76,6 +76,37 @@ def cmd_backtest(cfg, conn, args):
     print(f"report: {path}")
 
 
+def cmd_setup(cfg, conn, args):
+    """Интерактивно создать или дополнить .env. Уже заполненные значения остаются, пустой ввод их не меняет."""
+    import getpass
+    import socket
+    from pathlib import Path
+    p = Path(".env")
+    cur = {}
+    if p.exists():
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.split("=", 1)
+                cur[k.strip()] = v.strip()
+    fields = [
+        ("TELEGRAM_BOT_TOKEN", "Токен Telegram бота", "", True),
+        ("GEMINI_API_KEY", "Ключ Gemini", "", True),
+        ("TELEGRAM_CHANNEL_ID", "ID канала", "-1003595508596", False),
+        ("TELEGRAM_OWNER_ID", "Твой ID в Telegram", "569798955", False),
+        ("SIGBOT_NAME", "Имя этого компьютера (pc, laptop)", socket.gethostname().lower(), False),
+    ]
+    for key, label, default, secret in fields:
+        have = cur.get(key) or default
+        shown = ("задан" if cur.get(key) else "пусто") if secret else (have or "пусто")
+        ask = getpass.getpass if secret else input
+        v = ask(f"{label} [{shown}]: ").strip()
+        cur[key] = v or have
+    for k in [k for k, v in cur.items() if not v]:
+        print(f"внимание: {k} пустой")
+    p.write_text("".join(f"{k}={v}\n" for k, v in cur.items()), encoding="utf-8")
+    print(f".env записан: {p.resolve()}")
+
+
 def cmd_portfolio(cfg, conn, args):
     from pathlib import Path
     from . import portfolio
@@ -127,6 +158,7 @@ def main(argv=None):
     t.add_argument("--symbols")
     t.add_argument("--start")
     t.add_argument("--end")
+    sub.add_parser("setup", help="создать или дополнить .env")
     pf = sub.add_parser("portfolio", help="бэктест трендового портфеля")
     pf.add_argument("--start")
     pf.add_argument("--end")
@@ -143,6 +175,8 @@ def main(argv=None):
         asyncio.run(cmd_backfill(cfg, conn, args))
     elif args.cmd == "backtest":
         cmd_backtest(cfg, conn, args)
+    elif args.cmd == "setup":
+        cmd_setup(cfg, conn, args)
     elif args.cmd == "portfolio":
         cmd_portfolio(cfg, conn, args)
     elif args.cmd == "export":
