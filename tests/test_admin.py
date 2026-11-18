@@ -95,3 +95,23 @@ def test_every_menu_button_answers_in_russian(cfg, conn):
                 assert re.search("[а-яА-Я]", tg.sent[-1]), d
     asyncio.run(run())
     assert adm.eff()["portfolio"]["enabled"] is False and adm.eff()["publishing"]["mode"] == "confirm"
+
+
+def test_phone_screen_lists_links(cfg, conn, monkeypatch):
+    from sigbot import phone
+    from sigbot.admin import Admin
+
+    async def start(http, port, wait=40):
+        return "https://abc.trycloudflare.com"
+
+    async def check(url, tok, tries=12):
+        return False
+    monkeypatch.setattr(phone, "start", start)
+    monkeypatch.setattr(phone, "check", check)
+    monkeypatch.setattr(phone, "lan_ips", lambda: ["192.168.1.5"])
+    cfg["dashboard"]["host"] = "0.0.0.0"
+    adm = Admin(cfg, conn, None, 7, None, None, None, None, None, None)
+    text, _ = asyncio.run(adm.phone_screen())
+    tok = phone.token(conn)
+    assert f"https://abc.trycloudflare.com/?token={tok}" in text and f"http://192.168.1.5:8787/?token={tok}" in text
+    assert "allow_phone.bat" in text and "Пока не открывается" in text

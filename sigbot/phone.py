@@ -42,6 +42,37 @@ def lan_ip() -> str | None:
         return None
 
 
+def lan_ips() -> list[str]:
+    """Адреса компьютера в домашней сети. Через VPN основной адрес бывает «VPN-ным», поэтому берём все частные."""
+    ips = []
+    try:
+        ips += [a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)]
+    except OSError:
+        pass
+    ip = lan_ip()
+    if ip:
+        ips.append(ip)
+    priv = lambda x: x.startswith("192.168.") or x.startswith("10.") or \
+        (x.startswith("172.") and 16 <= int(x.split(".")[1]) <= 31)
+    out = [x for x in dict.fromkeys(ips) if priv(x)]
+    return sorted(out, key=lambda x: (not x.startswith("192.168."), x))[:3]
+
+
+async def check(url: str, tok: str, tries: int = 12) -> bool:
+    """Открывается ли панель по адресу туннеля с этого компьютера (новому адресу нужно до полуминуты)."""
+    import aiohttp
+    for _ in range(tries):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{url}/api/status?token={tok}", timeout=aiohttp.ClientTimeout(total=8)) as r:
+                    if r.status == 200:
+                        return True
+        except Exception:
+            pass
+        await asyncio.sleep(2.5)
+    return False
+
+
 def _asset() -> tuple[str, str]:
     sysname, arch = platform.system().lower(), platform.machine().lower()
     a = "arm64" if arch in ("arm64", "aarch64") else "amd64"
@@ -80,7 +111,9 @@ async def start(http, port: int, wait: float = 40) -> str | None:
     if pr and pr.returncode is None and STATE.get("url"):
         return STATE["url"]
     exe = await _binary(http)
-    pr = await asyncio.create_subprocess_exec(exe, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}",
+    # http2 вместо QUIC: UDP часто режут провайдеры и VPN, тогда адрес выдаётся, но не открывается
+    pr = await asyncio.create_subprocess_exec(exe, "tunnel", "--no-autoupdate", "--protocol", "http2",
+                                              "--url", f"http://127.0.0.1:{port}",
                                               stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     STATE.update(proc=pr, url=None)
 
