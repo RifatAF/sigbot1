@@ -128,7 +128,11 @@ async def run(cfg, conn, http):
             _set("warn", f"Архив data.binance.vision не открывается: нет истории OI по {len(no_oi)} монетам, "
                          "сигналов в бэктесте будет меньше. Включи VPN и перезапусти бота")
         try:
-            _st.put(conn, "perp_kinds", await bn.perp_kinds())
+            old_k = {k for k, v in (_st.get(conn, "perp_kinds") or {}).items() if v != "COIN"}
+            kinds = await bn.perp_kinds()
+            _st.put(conn, "perp_kinds", kinds)
+            if {k for k, v in kinds.items() if v != "COIN"} != old_k:
+                changed = True                       # нашлись новые акции и фонды: убрать их из бэктеста листингов
         except Exception:
             pass
         if changed or need_backtest(cfg):

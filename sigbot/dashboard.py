@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
+import time
 from pathlib import Path
 
 from aiohttp import web
 
 from . import chart, features, settings
+
+log = logging.getLogger(__name__)
 
 STATIC = Path(__file__).parent / "static"
 
@@ -139,14 +143,14 @@ chart.timeScale().subscribeVisibleLogicalRangeChange(redraw); chart.timeScale().
 async function showChart(t){
   tf = t.kind === 'capitulation' ? '1h' : '1d';
   chart.applyOptions({timeScale:{timeVisible: tf==='1h'}});
-  cs = await j('api/candles?symbol='+t.symbol+'&tf='+tf+(tf==='1h' ? '&center='+t.entry_time : ''));
+  cs = await j('api/candles?symbol='+t.symbol+'&tf='+tf+(tf==='1h' ? '&center='+t.entry_time : '')+(t.exchange ? '&ex='+t.exchange : ''));
   chart.priceScale('right').applyOptions({autoScale:true});   // новая монета: шкала цены под её цену, даже если шкалу тянули руками
   cs = cs.filter(c => c.open != null); times = cs.map(c => c.time); s.setData(cs);
   const L = t.side==='long', m = [{time:snap(t.entry_time), position: L?'belowBar':'aboveBar', color:B, shape: L?'arrowUp':'arrowDown', size:2, text: L?'ЛОНГ':'ШОРТ'}];
   for (const e of t.exits||[]) if (e.t) { const good = e.what==='tp1'||e.what==='tp2'||(e.what!=='sl' && pctFrom(t,e.price) > 0);
     m.push({time:snap(e.t), position: (good === L) ? 'aboveBar' : 'belowBar', color: good ? G : R, shape:'circle', size:1, text: WHAT[e.what] || e.what}); }
   s.setMarkers(m.filter(x => times.length && x.time >= times[0] && x.time <= times[times.length-1]).sort((a,b)=>a.time-b.time));
-  $('empty').style.display = cs.length ? 'none' : 'flex'; $('empty').textContent = 'Нет свечей по монете: история ещё загружается.';
+  $('empty').style.display = cs.length ? 'none' : 'flex'; $('empty').textContent = 'Нет свечей по монете: биржа не ответила. Проверь интернет или VPN и открой сделку ещё раз.';
   const cn = coneOf(t), cend = cn ? t.entry_time + cn.n*cn.P.step : 0;
   const end = Math.max(t.exit_time || times[times.length-1], cend), span = Math.max(end - t.entry_time, step()*(tf==='1d'?20:16));
   const lg = x => { const i = idx(snap(x)); return i < times.length ? i : times.length-1 + (snap(x)-times[times.length-1])/step(); };
@@ -549,6 +553,31 @@ def make_app(cfg, conn) -> web.Application:
             _ld["D"] = json.loads(listings_bt.CACHE.read_text()) if listings_bt.CACHE.exists() else {}
         return [{"time": r[0] // 1000, "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in _ld["D"].get(sym, [])]
 
+    async def exchange_daily(sym, ex=None):
+        """Дневки монеты, которой нет в базе и в архиве (свежий листинг): с Binance или Bybit, кэш на 30 минут."""
+        key = (sym, ex)
+        hit = _ld.get(key)
+        if hit and time.time() - hit[0] < 1800:
+            return hit[1]
+        from .http import Http
+        from .sources import Binance, Bybit
+        http, rows = Http(), []
+        try:
+            order = [Bybit, Binance] if ex == "bybit" else [Binance, Bybit]
+            for cls in order:
+                try:
+                    k = await cls(http).klines(sym, "futures", "1d", int(time.time() * 1000) - 300 * 86_400_000, 300)
+                except Exception as e:
+                    log.info("daily %s %s: %s", cls.__name__, sym, str(e)[:100])
+                    continue
+                if k:
+                    rows = [{"time": r[0] // 1000, "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in k]
+                    break
+        finally:
+            await http.close()
+        _ld[key] = (time.time(), rows)
+        return rows
+
     async def candles(request):
         sym = request.query.get("symbol", "BTCUSDT")
         if request.query.get("tf") == "1d":   # дневки из часовых за всю историю: видно позиции портфеля
@@ -558,8 +587,16 @@ def make_app(cfg, conn) -> web.Application:
             for d, _ts, o, h, lo, c in rows:
                 x = out.get(d)
                 out[d] = [o, h, lo, c] if x is None else [x[0], max(x[1], h), min(x[2], lo), c]
-            if not out:                        # новые листинги: дневки из архива всех фьючерсов (listings_bt)
-                return web.json_response(listing_daily(sym))
+            if not out:                        # новые листинги: архив всех фьючерсов, а свежие прямо с биржи
+                arc = listing_daily(sym)
+                last = arc[-1]["time"] if arc else 0
+                if time.time() - last > 2 * 86400:
+                    fresh = await exchange_daily(sym, request.query.get("ex"))
+                    if fresh:
+                        merged = {c["time"]: c for c in arc}
+                        merged.update({c["time"]: c for c in fresh})
+                        arc = [merged[k] for k in sorted(merged)]
+                return web.json_response(arc)
             return web.json_response([{"time": d, "open": v[0], "high": v[1], "low": v[2], "close": v[3]}
                                       for d, v in out.items()])
         c = int(request.query.get("center") or 0) * 1000     # окно вокруг выбранного сигнала, иначе последние бары
@@ -725,6 +762,7 @@ def make_app(cfg, conn) -> web.Application:
             out.append({"kind": "listing", "symbol": r["symbol"], "side": "short", "entry_time": r["entry_ts"] // 1000,
                         "exit_time": r["exit_ts"] // 1000 if r["exit_ts"] else None, "entry": r["entry"], "stop": r["stop"],
                         "exit": r["exit_price"], "size_pct": r["notional_pct"], "result_pct": r["pnl_pct"],
+                        "exchange": r["exchange"] if "exchange" in r.keys() else None,
                         "open": r["status"] == "open", "exit_reason": {"stop": "стоп", "time": "по времени"}.get(r["exit_reason"]),
                         "exits": [{"what": "sl" if r["exit_reason"] == "stop" else r["exit_reason"], "t": r["exit_ts"] // 1000,
                                    "price": r["exit_price"], "part": 1.0}] if r["status"] == "closed" else []})

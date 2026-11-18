@@ -107,3 +107,23 @@ async def test_bybit_only_listing_is_traded(cfg, conn, tg):
     await ls.run_daily((d0 + 2) * DAY + 60_000)
     rows = conn.execute("SELECT symbol, exchange FROM listing_trades WHERE status='open'").fetchall()
     assert [tuple(r) for r in rows] == [("BYBUSDT", "bybit")] and "Bybit" in tg.sent[-1][1]
+
+
+def test_perp_kind_detects_tradfi():
+    from sigbot.sources import _symbols_in, perp_kind
+    assert perp_kind({"underlyingType": "COIN", "contractType": "PERPETUAL", "underlyingSubType": ["Meme"]}) == "COIN"
+    assert perp_kind({"underlyingType": "COIN", "contractType": "TRADIFI_PERPETUAL"}) == "TRADFI"
+    assert perp_kind({"underlyingType": "COIN", "contractType": "PERPETUAL", "underlyingSubType": ["TradFi"]}) == "TRADFI"
+    assert perp_kind({"underlyingType": "EQUITY"}) == "EQUITY"
+    assert _symbols_in({"markets": {"US": {"symbols": ["DUOLUSDT", "x"]}}, "t": 1}) == {"DUOLUSDT"}
+
+
+@pytest.mark.asyncio
+async def test_stock_listing_cancelled(cfg, conn, tg):
+    d0 = 20_000
+    conn.execute("INSERT INTO listing_trades (symbol, onboard_ts, entry_ts, entry, stop, exit_due_ts, notional_pct, status) "
+                 "VALUES ('DUOLUSDT', 1, ?, 150, 225, ?, 4.5, 'open')", (d0 * DAY, (d0 + 60) * DAY))
+    cfg["listings"]["exclude"] = ["DUOL"]
+    ls = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), FakeBN(1, []))
+    await ls.run_daily((d0 + 2) * DAY)
+    assert conn.execute("SELECT status FROM listing_trades WHERE symbol='DUOLUSDT'").fetchone()[0] == "cancelled"

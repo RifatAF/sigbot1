@@ -44,13 +44,21 @@ class ListingShorts:
         except Exception:
             kinds = settings.get(self.conn, "perp_kinds") or {}
         bn_list = await self.bn.perp_listings()
-        cands = [(sym, onboard, "binance") for sym, onboard in bn_list if kinds.get(sym, "COIN") == "COIN"]
+        excl = {x.upper().replace("USDT", "") for x in lc.get("exclude", [])}
+        bad = lambda sym: kinds.get(sym, "COIN") != "COIN" or sym.replace("USDT", "") in excl
+        for t in self.open_trades():                     # акция попала в шорт раньше, до фильтра: снимаем без поста
+            if bad(t["symbol"]):
+                self.conn.execute("UPDATE listing_trades SET status='cancelled', exit_reason='not_crypto' WHERE symbol=?",
+                                  (t["symbol"],))
+                await self.pub.notify_owner(f"🆕 {t['symbol'].replace('USDT', '')}: это не криптовалюта (акция или фонд), "
+                                            "сделка шорта листинга снята из учёта.")
+        cands = [(sym, onboard, "binance") for sym, onboard in bn_list if not bad(sym)]
         # акции, золото, валюты на Binance: не новые токены, правило к ним не относится
         if self.bb and settings.effective(self.cfg, self.conn)["listings"].get("bybit"):
             first_bn = dict(bn_list)
             try:
                 for sym, launch in await self.bb.perp_listings():
-                    if sym in first_bn and first_bn[sym] <= launch + 2 * DAY:      # уже есть на Binance: это не новый листинг
+                    if (sym in first_bn and first_bn[sym] <= launch + 2 * DAY) or bad(sym):   # уже есть на Binance или акция
                         continue
                     cands.append((sym, launch, "bybit"))
             except Exception as e:

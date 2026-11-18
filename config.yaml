@@ -127,6 +127,7 @@ portfolio:
 
 listings:
   enabled: true
+  exclude: [DUOL, BKNG]        # не крипта (акции), если биржа их не пометила
   bybit: false                 # шорт листингов Bybit (монеты, которых нет на Binance); включается в /menu → Стратегии
   notional_pct: 4.5            # шорт на каждый новый листинг, % капитала (убыток по стопу ~2.3%)
   require_weak_first_day: true # только если первые сутки закрылись ниже открытия листинга

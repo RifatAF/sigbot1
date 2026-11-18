@@ -60,6 +60,31 @@ class Bybit:
                       for k in r.get("list", []))
 
 
+TRADFI_WORDS = ("tradfi", "stock", "equity", "etf", "commodit", "metal", "forex", "index", "bond", "pre-market")
+
+
+def perp_kind(x: dict) -> str:
+    """COIN для криптовалюты; иначе акция, ETF, металл, валюта. Binance помечает их по-разному:
+    отдельный contractType (TRADIFI_PERPETUAL), underlyingType или метки в underlyingSubType."""
+    ut = str(x.get("underlyingType") or "COIN")
+    if ut.upper() != "COIN":
+        return ut
+    ct = str(x.get("contractType") or "")
+    if ct and ct != "PERPETUAL" and "TRADIFI" in ct.upper():
+        return "TRADFI"
+    tags = " ".join(map(str, x.get("underlyingSubType") or [])).lower()
+    return "TRADFI" if any(w in tags for w in TRADFI_WORDS) else "COIN"
+
+
+def _symbols_in(x) -> set[str]:
+    """Все строки вида XXXUSDT в ответе любой формы."""
+    if isinstance(x, dict):
+        return set().union(*(_symbols_in(v) for v in x.values())) if x else set()
+    if isinstance(x, list):
+        return set().union(*(_symbols_in(v) for v in x)) if x else set()
+    return {x} if isinstance(x, str) and x.endswith("USDT") and x.isupper() and x.isalnum() else set()
+
+
 class Binance:
     def __init__(self, http: Http):
         self.http = http
@@ -92,7 +117,14 @@ class Binance:
         """Тип базового актива перпетуала: COIN для криптовалют, иначе акции, сырьё, валюты (их не шортим как листинги)."""
         await FUT_LIMIT.acquire(1)
         info = await self.http.get_json(f"{FAPI}/fapi/v1/exchangeInfo")
-        return {x["symbol"]: x.get("underlyingType", "COIN") for x in info["symbols"] if x.get("quoteAsset") == quote}
+        out = {x["symbol"]: perp_kind(x) for x in info["symbols"] if x.get("quoteAsset") == quote}
+        try:                                    # расписание торгов есть только у акций и фондов: всё, что в нём, не крипта
+            for sym in _symbols_in(await self.http.get_json(f"{FAPI}/fapi/v1/tradingSchedule")):
+                if out.get(sym) == "COIN":
+                    out[sym] = "TRADFI"
+        except Exception:
+            pass
+        return out
 
     async def klines(self, symbol: str, market: str, interval: str, start_ms: int | None = None,
                      limit: int = 1000) -> list[tuple]:
