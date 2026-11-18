@@ -107,7 +107,7 @@ async def auto_update(pub):
         try:
             new = await asyncio.to_thread(updater.pending)
             if new:
-                msg = "🔄 Ставлю обновление, бот перезапустится за 10–30 секунд:\n" + "\n".join("• " + x[:160] for x in new[:3])
+                msg = "🔄 Ставлю обновление, бот перезапустится за 10–30 секунд:\n" + "\n".join("• " + updater.short(x) for x in new[:3])
                 print("\n" + msg, flush=True)
                 await pub.notify_owner(msg)
                 os._exit(updater.UPDATE_EXIT)
@@ -176,7 +176,9 @@ async def run(cfg, conn):
         admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col, leader)
         tasks.append(asyncio.create_task(_guard("admin", admin.loop)))
         tasks.append(asyncio.create_task(_guard("leader", leader.loop)))
+        from . import updater
         upd = os.environ.pop("SIGBOT_UPDATED", None)
+        upd = updater.fix_text(upd) if upd else upd
         await pub.notify_owner((f"{upd}\n\n" if upd else "") +
                                f"✅ Бот запущен на компьютере {leader.name}, он основной. Настройки: /menu")
     tasks.append(asyncio.create_task(_guard("heartbeat", lambda: heartbeat(conn, leader))))

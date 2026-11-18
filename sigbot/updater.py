@@ -17,7 +17,48 @@ UPDATE_EXIT = 3
 
 
 def _git(*a, timeout=120):
-    return subprocess.run(["git", *a], capture_output=True, text=True, timeout=timeout)
+    # git пишет UTF-8, а Windows по умолчанию читает вывод как cp1251: отсюда «РЎС‚Р°РІ…» вместо русского текста
+    return subprocess.run(["git", "-c", "i18n.logOutputEncoding=utf-8", *a], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=timeout)
+
+
+def short(subject: str, n: int = 110) -> str:
+    """Заголовок коммита коротко: до первого двоеточия или точки с запятой."""
+    s = subject.split(":")[0].split(";")[0].strip()
+    return s if len(s) <= n else s[:n].rsplit(" ", 1)[0] + "…"
+
+
+def fix_text(s: str) -> str:
+    """Чинит текст, уже испорченный старой версией сторожа (UTF-8, прочитанный как cp1251)."""
+    if not any(c in s for c in "РСв"):
+        return s
+    out, buf = [], []
+
+    def flush():
+        if buf:
+            chunk = "".join(buf)
+            res = chunk
+            try:
+                b = chunk.encode("cp1251")
+                for cut in range(4):                 # конец мог обрезаться посреди буквы
+                    try:
+                        res = b[:len(b) - cut].decode("utf-8")
+                        break
+                    except UnicodeDecodeError:
+                        continue
+            except UnicodeEncodeError:
+                pass
+            out.append(res)
+            buf.clear()
+    for c in s:                                   # эмодзи сторожа целые, испорчен только текст git
+        try:
+            c.encode("cp1251")
+            buf.append(c)
+        except UnicodeEncodeError:
+            flush()
+            out.append(c)
+    flush()
+    return "".join(out)
 
 
 def _hash(p: str) -> str:
@@ -43,7 +84,7 @@ def apply() -> tuple[bool, str]:
     if _hash("requirements.txt") != req:
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"], timeout=900)
     subj = _git("log", "--format=%s", f"{old}..HEAD").stdout.splitlines()
-    return True, "; ".join(s[:160] for s in subj[:3]) or "без описания"
+    return True, "Обновление установлено: " + ("; ".join(short(s) for s in subj[:3]) or "без описания")
 
 
 def supervise() -> int:
