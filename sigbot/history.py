@@ -57,7 +57,11 @@ async def fill_funding(conn, bn, symbol: str, start: int, end: int) -> int:
         return 0
     n, cur = 0, start
     while cur < end:
-        rows = await bn.funding_hist(symbol, cur)
+        try:
+            rows = await bn.funding_hist(symbol, cur)
+        except Exception as e:                      # сеть или биржа недоступна: не роняем подготовку
+            log.info("funding %s: %s", symbol, str(e)[:100])
+            break
         if not rows:
             break
         conn.executemany("INSERT OR REPLACE INTO funding VALUES (?,?,?)", [(symbol, t, r) for t, r in rows])

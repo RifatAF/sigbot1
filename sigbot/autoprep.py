@@ -81,7 +81,22 @@ async def run(cfg, conn, http):
         except Exception:
             listed = {}
         ok = lambda s: coverage(conn, s, max(start, listed.get(s, start)), now) >= 0.97
-        todo = [s for s in syms if not ok(s)]
+        from . import settings as _st
+        done = _st.get(conn, "history_done") or {}          # монеты, по которым история уже скачана: архив не трогаем
+        DAYMS = 86_400_000
+        for s in syms:
+            if s in done:
+                continue
+            first = conn.execute("SELECT MIN(ts) FROM candles WHERE symbol=? AND market='futures' AND tf='1h'", (s,)).fetchone()[0]
+            from_start = first is not None and (first <= start + 5 * DAYMS or (s in listed and first <= listed[s] + 2 * DAYMS))
+            if from_start and coverage(conn, s, max(start, first), now) >= 0.97:
+                done[s] = now                                # история уже была до этой версии: помечаем без загрузки
+        quick = [s for s in syms if s in done]
+        for i, s in enumerate(quick, 1):                     # только хвост с прошлой проверки, через API, секунды
+            _set("work", f"Проверяю свежесть истории: {s.replace('USDT', '')} ({i}/{len(quick)})", 1 + 2 * i / max(len(quick), 1), quiet=True)
+            await fill(conn, bn, s, max(start, int(done[s]) - 2 * DAYMS), now)
+            done[s] = now
+        todo = [s for s in syms if s not in done]
         changed = bool(todo)
         for i, s in enumerate(todo, 1):
             name = s.replace("USDT", "")
@@ -97,7 +112,10 @@ async def run(cfg, conn, http):
                 await job
             _set("work", f"История {name} ({i}/{len(todo)}): докачиваю пропуски через API", 3 + 67 * (i - .4) / len(todo))
             await fill(conn, bn, s, start, now)
-        bad = [s.replace("USDT", "") for s in syms if not ok(s)]
+            done[s] = now
+            _st.put(conn, "history_done", done)              # больше эту монету целиком не качаем
+        _st.put(conn, "history_done", done)
+        bad = [s.replace("USDT", "") for s in todo if not ok(s)]
         if bad:
             _set("warn", f"Неполная история: {', '.join(bad[:10])}. Проверь интернет и перезапусти бота")
         no_oi = [s.replace("USDT", "") for s in syms if not conn.execute(
@@ -106,7 +124,6 @@ async def run(cfg, conn, http):
             _set("warn", f"Архив data.binance.vision не открывается: нет истории OI по {len(no_oi)} монетам, "
                          "сигналов в бэктесте будет меньше. Включи VPN и перезапусти бота")
         try:
-            from . import settings as _st
             _st.put(conn, "perp_kinds", await bn.perp_kinds())
         except Exception:
             pass

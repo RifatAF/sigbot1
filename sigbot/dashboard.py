@@ -133,6 +133,7 @@ async function showChart(t){
   tf = t.kind === 'capitulation' ? '1h' : '1d';
   chart.applyOptions({timeScale:{timeVisible: tf==='1h'}});
   cs = await j('api/candles?symbol='+t.symbol+'&tf='+tf+(tf==='1h' ? '&center='+t.entry_time : ''));
+  chart.priceScale('right').applyOptions({autoScale:true});   // новая монета: шкала цены под её цену, даже если шкалу тянули руками
   cs = cs.filter(c => c.open != null); times = cs.map(c => c.time); s.setData(cs);
   const m = [{time:snap(t.entry_time), position: t.side==='long'?'belowBar':'aboveBar', color:B, shape: t.side==='long'?'arrowUp':'arrowDown', size:2}];
   if (t.exit_time) m.push({time:snap(t.exit_time), position: t.side==='long'?'aboveBar':'belowBar', color: (t.result_pct ?? t.move_pct) > 0 ? G : R, shape:'circle', size:1});
@@ -345,6 +346,7 @@ function segments(marks){                                 // смены стор
 }
 async function loadCandles(sym){
   cs = await j('api/candles?symbol='+sym+'&tf='+S.tf+(S.tf==='1h' && center ? '&center='+center : ''));
+  chart.priceScale('right').applyOptions({autoScale:true});
   cs = cs.filter(c => c.open!=null && c.close!=null); times = cs.map(c => c.time); s.setData(cs);
   const m = [];
   items.forEach((t, i) => { const long = t.side==='long';
