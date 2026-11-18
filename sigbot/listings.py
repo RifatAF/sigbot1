@@ -50,6 +50,8 @@ class ListingShorts:
             if bad(t["symbol"]):
                 self.conn.execute("UPDATE listing_trades SET status='cancelled', exit_reason='not_crypto' WHERE symbol=?",
                                   (t["symbol"],))
+                if getattr(self, "demo", None):
+                    await self.demo.reduce("listing", t["symbol"], None, "не криптовалюта")
                 await self.pub.notify_owner(f"🆕 {t['symbol'].replace('USDT', '')}: это не криптовалюта (акция или фонд), "
                                             "сделка шорта листинга снята из учёта.")
         cands = [(sym, onboard, "binance") for sym, onboard in bn_list if not bad(sym)]
@@ -93,6 +95,8 @@ class ListingShorts:
             self.conn.execute("INSERT INTO listing_trades (symbol, onboard_ts, entry_ts, entry, stop, exit_due_ts, notional_pct, "
                               "status, exchange) VALUES (?,?,?,?,?,?,?, 'open', ?)",
                               (sym, onboard, entry_close, entry, stop, due, lc["notional_pct"], ex))
+            if getattr(self, "demo", None):
+                await self.demo.open("listing", sym, sym, "short", lc["notional_pct"], ex if ex == "bybit" else None)
             text, nums = templates.listing_signal(sym, entry, stop, lc, self.cfg["publishing"]["mode"], self._lang(), ex)
             posts.append(await self.pub.publish("listing", text, nums))
         # 2. ведение: стоп по максимуму суток, иначе выход по времени
@@ -119,6 +123,8 @@ class ListingShorts:
             pnl = (-(exit_price / t["entry"] - 1) * 100 - fee) * t["notional_pct"] / 100
             self.conn.execute("UPDATE listing_trades SET status='closed', exit_ts=?, exit_price=?, exit_reason=?, "
                               "pnl_pct=? WHERE symbol=?", (exit_ts, exit_price, reason, pnl, t["symbol"]))
+            if getattr(self, "demo", None):
+                await self.demo.reduce("listing", t["symbol"], None, "стоп" if reason == "stop" else "выход по времени")
             text, nums = templates.listing_exit(t["symbol"], t["entry"], exit_price, reason, pnl,
                                                 self.cfg["publishing"]["mode"], self._lang(),
                                                 int((exit_ts - t["entry_ts"]) / DAY))

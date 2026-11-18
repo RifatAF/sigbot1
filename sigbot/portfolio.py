@@ -230,6 +230,8 @@ class LivePortfolio:
         self.conn.execute("UPDATE trend_signals SET status='closed', close_day=?, exit_price=?, move_pct=?, result_pct=? "
                           "WHERE id=?", (int(day_ms), last, mv, res, r["id"]))
         self._save(r["id"], st)
+        if getattr(self, "demo", None):
+            await self.demo.reduce("trend", str(r["id"]), None, "сигнал закрыт")
         text, nums = templates.trade_closed(r["symbol"], r["side"], r["entry"], st["exits"], res,
                                             int((day_ms - r["open_day"]) / DAY), mode, self._lang(), label)
         return await self.pub.publish("trend_exit", text, nums)
@@ -267,6 +269,9 @@ class LivePortfolio:
             for ts, hi, lo in rows:
                 st["last_ts"] = ts + 3_600_000
                 for ev in feed.step(st, ts // 1000 + 3600, hi, lo):
+                    if getattr(self, "demo", None):
+                        await self.demo.reduce("trend", str(r["id"]), None if ev["what"] == "sl" else ev["part"],
+                                               {"tp1": "TP1", "tp2": "TP2", "sl": "стоп"}[ev["what"]])
                     if st["rem"] > 1e-9:
                         text, nums = templates.trade_event(r["symbol"], r["side"], ev["what"], ev["price"], r["entry"],
                                                            ev["part"], st["rem"], st["stop"], mode, self._lang())
@@ -324,6 +329,9 @@ class LivePortfolio:
             self.conn.execute("INSERT INTO trend_signals (symbol, side, open_day, entry, size_pct, exit_level, stop, tp1, tp2, state) "
                               "VALUES (?,?,?,?,?,?,?,?,?,?)", (sym, side, day, px, round(abs(w) * 100, 1), lv,
                                                               levels["stop"], levels["tp1"], levels["tp2"], json.dumps(st)))
+            rid = self.conn.execute("SELECT MAX(id) FROM trend_signals").fetchone()[0]
+            if getattr(self, "demo", None) and not first:
+                await self.demo.open("trend", str(rid), sym, side, abs(w) * 100)
             if not first:                       # первый запуск: не заваливаем канал, ниже одним списком
                 text, nums = templates.trend_signal(sym, side, px, abs(w) * 100, lv, mode, stats, levels, lang)
                 sent = await self.pub.publish("trend_signal", text, nums) or sent

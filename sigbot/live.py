@@ -111,6 +111,9 @@ class Live:
                             sz.risk_pct, sz.leverage, c.strength, cfg["publishing"]["mode"], feats)
         sid = ledger.add_signal(self.conn, sig)
         self.conn.execute("INSERT INTO trade_state VALUES (?,?,?,?,?,?)", (sid, "open", c.stop, 1.0, 0, sig.ts))
+        if getattr(self, "demo", None):
+            dist = abs(c.entry - c.stop) / c.entry * 100
+            await self.demo.open("capitulation", str(sid), c.symbol, c.side, sz.risk_pct / dist * 100 if dist else 0)
 
         d = {**sig.__dict__, "features": feats}
         facts = {"coin": c.symbol.replace("USDT", ""), "side": c.side, "divergences": feats.get("divergences"),
@@ -184,6 +187,9 @@ class Live:
         if st.status == "closed":
             total = self.conn.execute("SELECT COALESCE(SUM(pnl_r),0) FROM outcomes WHERE signal_id=?",
                                       (o["id"],)).fetchone()[0]
+        if getattr(self, "demo", None) and (ev.fraction or st.status == "closed"):
+            await self.demo.reduce("capitulation", str(o["id"]), None if st.status == "closed" else ev.fraction,
+                                   {"tp1": "TP1", "tp2": "TP2", "stop": "стоп"}.get(ev.event, ev.event))
         if ev.event == "trail":
             return   # трейлинг подтягивается каждые сутки: в журнал, без поста
         lang = settings.effective(self.cfg, self.conn)["publishing"].get("lang", "en")

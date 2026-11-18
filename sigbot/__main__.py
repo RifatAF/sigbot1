@@ -130,6 +130,10 @@ def cmd_setup(cfg, conn, args):
         ("TELEGRAM_CHANNEL_ID", "ID канала", "-1003595508596", False),
         ("TELEGRAM_OWNER_ID", "Твой ID в Telegram", "569798955", False),
         ("SIGBOT_NAME", "Имя этого компьютера (pc, laptop)", socket.gethostname().lower(), False),
+        ("BINANCE_DEMO_KEY", "Демо-ключ Binance (demo.binance.com, можно пропустить Enter)", "", True),
+        ("BINANCE_DEMO_SECRET", "Демо-секрет Binance", "", True),
+        ("BYBIT_DEMO_KEY", "Демо-ключ Bybit (режим Demo Trading, можно пропустить)", "", True),
+        ("BYBIT_DEMO_SECRET", "Демо-секрет Bybit", "", True),
     ]
     for key, label, default, secret in fields:
         have = cur.get(key) or default
@@ -137,7 +141,7 @@ def cmd_setup(cfg, conn, args):
         ask = getpass.getpass if secret else input
         v = ask(f"{label} [{shown}]: ").strip()
         cur[key] = v or have
-    for k in [k for k, v in cur.items() if not v]:
+    for k in [k for k, v in cur.items() if not v and "DEMO" not in k]:
         print(f"внимание: {k} пустой")
     p.write_text("".join(f"{k}={v}\n" for k, v in cur.items()), encoding="utf-8")
     print(f".env записан: {p.resolve()}")

@@ -158,6 +158,9 @@ async def run(cfg, conn):
     from .sources import Binance, Bybit
     lst = ListingShorts(cfg, conn, pub, Binance(http), Bybit(http))
     col = Collector(cfg, conn, http)
+    from .demo import DemoTrader
+    dt = DemoTrader(cfg, conn, pub.notify_owner)
+    live.demo = port.demo = lst.demo = dt
 
     say = lambda m: print(m, flush=True)
     say("\n=== sigbot запускается ===")
