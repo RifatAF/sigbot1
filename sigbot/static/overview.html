@@ -1,0 +1,68 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>sigbot · обзор</title><script src="static/lightweight-charts.js"></script>
+<style>
+body{margin:0;background:#0f1115;color:#e6e6e6;font:14px -apple-system,Segoe UI,Roboto,sans-serif}
+a{color:#7aa7ff}h2{font-size:16px;margin:22px 16px 8px}
+header{display:flex;gap:14px;align-items:center;padding:10px 16px;flex-wrap:wrap;border-bottom:1px solid #232836}
+.muted{color:#8b93a1}#eq{height:52vh;margin:0 16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;padding:8px 16px}.legend label{cursor:pointer}
+table{border-collapse:collapse;margin:0 16px 8px;font-variant-numeric:tabular-nums}td,th{padding:5px 9px;border-bottom:1px solid #232836;text-align:right}
+th:first-child,td:first-child{text-align:left}.pos{color:#3ddc97}.neg{color:#ff6b6b}
+.wrap{overflow-x:auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;padding:0 16px}
+.card{background:#151922;border:1px solid #232836;border-radius:8px;padding:10px}.card b{display:block;font-size:20px;margin-top:4px}
+</style></head><body>
+<header><b>sigbot</b><a id="toChart" href="./">график и сигналы</a><span class="muted" id="gen"></span></header>
+<h2>Сейчас (живая работа)</h2><div class="grid" id="live"></div>
+<h2>Текущие позиции портфеля</h2><div class="wrap"><table id="pos"></table></div>
+<h2>Открытые шорты листингов</h2><div class="wrap"><table id="lopen"></table></div>
+<h2>Последние посты</h2><div class="wrap"><table id="posts"></table></div>
+<h2>Бэктест: рост 1 доллара (логарифмическая шкала)</h2>
+<div class="legend" id="legend"></div><div id="eq"></div>
+<h2>Итоги</h2><div class="wrap"><table id="stats"></table></div>
+<h2>По годам, %</h2><div class="wrap"><table id="years"></table></div>
+<h2>По месяцам (итог), %</h2><div class="wrap"><table id="months"></table></div>
+<h2>Шорты листингов в бэктесте (последние 60)</h2><div class="wrap"><table id="ltr"></table></div>
+<script>
+const q=new URLSearchParams(location.search), tok=q.get('token')?'token='+q.get('token'):'';
+document.getElementById('toChart').href='./'+(tok?'?'+tok:'');
+const j=u=>fetch(u+(u.includes('?')?'&':'?')+tok).then(r=>r.json());
+const cls=v=>v>0?'pos':v<0?'neg':'', pct=(v,d=1)=>v==null?'—':(v>0?'+':'')+Number(v).toFixed(d)+'%';
+const d8=t=>new Date(t*1000).toISOString().slice(0,10);
+const COLORS=['#ffd166','#5b8cff','#a88cff','#8b93a1','#f7931a'];
+(async()=>{
+ const L=await j('api/live');
+ const lv=document.getElementById('live');
+ lv.innerHTML=[['Кто основной',L.leader||'—'],['Режим',L.mode],['Бумажный портфель',pct(L.paper_total_pct,2)],
+  ['Позиций в портфеле',L.positions.length],['Открытых шортов листингов',L.listings_open.length],['Последний пост',L.last_post||'—']]
+  .map(([k,v])=>`<div class="card"><span class="muted">${k}</span><b>${v}</b></div>`).join('');
+ document.getElementById('pos').innerHTML='<tr><th>Монета</th><th>Сторона</th><th>Доля капитала</th></tr>'+
+  (L.positions.length?L.positions.map(p=>`<tr><td><a href="./?symbol=${p.symbol}${tok?'&'+tok:''}">${p.symbol.replace('USDT','')}</a></td><td class="${p.w>0?'pos':'neg'}">${p.w>0?'LONG':'SHORT'}</td><td>${(Math.abs(p.w)*100).toFixed(1)}%</td></tr>`).join(''):'<tr><td colspan=3 class="muted">пока нет: портфель считается на закрытии суток</td></tr>');
+ document.getElementById('lopen').innerHTML='<tr><th>Монета</th><th>Вход</th><th>Стоп</th><th>Выход до</th></tr>'+
+  (L.listings_open.length?L.listings_open.map(t=>`<tr><td>${t.symbol}</td><td>${t.entry}</td><td>${t.stop}</td><td>${d8(t.exit_due_ts/1000)}</td></tr>`).join(''):'<tr><td colspan=4 class="muted">нет</td></tr>');
+ document.getElementById('posts').innerHTML='<tr><th>Время UTC</th><th>Тип</th><th>Статус</th><th>Текст</th></tr>'+
+  L.posts.map(p=>`<tr><td>${p.ts}</td><td>${p.kind}</td><td class="${p.status=='sent'?'pos':p.status=='blocked'?'neg':''}">${p.status}</td><td style="text-align:left">${p.text}</td></tr>`).join('');
+ const R=await j('api/overview');
+ if(!R.curves){document.getElementById('eq').innerHTML='<p class="muted">Отчёта нет: python -m sigbot report</p>';return;}
+ document.getElementById('gen').textContent=`бэктест ${R.period[0]} .. ${R.period[1]}, версия ${R.params_version}, посчитан ${d8(R.generated)}`;
+ const ch=LightweightCharts.createChart(document.getElementById('eq'),{autoSize:true,layout:{background:{color:'#0f1115'},textColor:'#c9ced6'},
+  grid:{vertLines:{color:'#1b1f27'},horzLines:{color:'#1b1f27'}},rightPriceScale:{mode:1},timeScale:{timeVisible:false}});
+ const names=Object.keys(R.curves), series={};
+ names.forEach((n,i)=>{series[n]=ch.addLineSeries({color:COLORS[i%5],lineWidth:i==0?3:2,priceLineVisible:false,title:n});
+  series[n].setData(R.curves[n].map(([t,v])=>({time:t,value:v})));});
+ ch.timeScale().fitContent();
+ document.getElementById('legend').innerHTML=names.map((n,i)=>`<label><input type=checkbox checked data-n="${n}"> <span style="color:${COLORS[i%5]}">■</span> ${n}</label>`).join('');
+ document.querySelectorAll('#legend input').forEach(c=>c.onchange=()=>series[c.dataset.n].applyOptions({visible:c.checked}));
+ const S=R.stats;
+ document.getElementById('stats').innerHTML='<tr><th></th><th>Годовая</th><th>Средний месяц</th><th>Месяцев в плюсе</th><th>Макс. просадка</th><th>Sharpe</th><th>Итог за период</th></tr>'+
+  names.map(n=>{const s=S[n];return `<tr><td>${n}</td><td class="${cls(s.cagr_pct)}">${pct(s.cagr_pct)}</td><td>${pct(s.avg_month_pct,2)}</td><td>${s.positive_months_pct}%</td><td class="neg">${s.max_drawdown_pct}%</td><td>${s.sharpe}</td><td class="${cls(s.return_pct)}">${pct(s.return_pct,0)}</td></tr>`}).join('');
+ const yrs=Object.keys(S[names[0]].years);
+ document.getElementById('years').innerHTML='<tr><th></th>'+yrs.map(y=>`<th>${y}</th>`).join('')+'</tr>'+
+  names.map(n=>'<tr><td>'+n+'</td>'+yrs.map(y=>{const v=S[n].years[y];return `<td class="${cls(v)}">${pct(v,0)}</td>`}).join('')+'</tr>').join('');
+ const M=R.months, byY={};
+ Object.entries(M).forEach(([k,v])=>{const [y,m]=k.split('-');(byY[y]=byY[y]||{})[+m]=v;});
+ document.getElementById('months').innerHTML='<tr><th>Год</th>'+[...Array(12)].map((_,i)=>`<th>${i+1}</th>`).join('')+'</tr>'+
+  Object.keys(byY).map(y=>'<tr><td>'+y+'</td>'+[...Array(12)].map((_,i)=>{const v=byY[y][i+1];return `<td class="${cls(v)}">${v==null?'':pct(v,0)}</td>`}).join('')+'</tr>').join('');
+ document.getElementById('ltr').innerHTML='<tr><th>Монета</th><th>Вход</th><th>Цена входа</th><th>Выход</th><th>Причина</th><th>Результат, % капитала</th></tr>'+
+  R.listing_trades.slice(0,60).map(t=>`<tr><td>${t.symbol.replace('USDT','')}</td><td>${d8(t.entry_t/1000)}</td><td>${t.entry}</td><td>${d8(t.exit_t/1000)}</td><td>${t.reason}</td><td class="${cls(t.pnl_pct)}">${pct(t.pnl_pct,2)}</td></tr>`).join('');
+})();
+</script></body></html>

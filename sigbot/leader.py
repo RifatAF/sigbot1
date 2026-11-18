@@ -17,7 +17,8 @@ RE = re.compile(r"sigbot main:\s*(\S+)(?:.*?alive (\d{10}))?", re.S)
 
 
 class Leader:
-    def __init__(self, tg, owner_id, name: str, stale_s: int = 900, beat_s: int = 300):
+    def __init__(self, tg, owner_id, name: str, stale_s: int = 900, beat_s: int = 300, conn=None):
+        self.conn = conn
         self.tg, self.owner, self.name = tg, owner_id, name
         self.stale_s, self.beat_s = stale_s, beat_s
         self.is_main = False
@@ -78,6 +79,9 @@ class Leader:
                 self.is_main = True
                 await self.tg.send_message(self.owner, f"⚠️ {main} молчит {int((now - ts) // 60)} мин, "
                                                        f"основным стал {self.name}.", parse_mode=None)
+        if self.conn is not None:
+            from . import settings
+            settings.put(self.conn, "leader_name", f"{main or self.name}{' (this)' if self.is_main else ''}")
         return self.is_main
 
     async def loop(self):

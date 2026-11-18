@@ -91,7 +91,7 @@ async def run(cfg, conn):
     if tg and owner:
         import socket
         from .leader import Leader
-        leader = Leader(tg, int(owner), os.environ.get("SIGBOT_NAME") or socket.gethostname().lower())
+        leader = Leader(tg, int(owner), os.environ.get("SIGBOT_NAME") or socket.gethostname().lower(), conn=conn)
         try:
             await leader.tick()
         except Exception as e:

@@ -76,6 +76,31 @@ def cmd_backtest(cfg, conn, args):
     print(f"report: {path}")
 
 
+async def cmd_check(cfg, conn, args):
+    from . import diag
+    from .http import Http
+    http = Http()
+    try:
+        print(diag.format_check(await diag.selfcheck(cfg, conn, http)))
+    finally:
+        await http.close()
+
+
+async def cmd_testpost(cfg, conn, args):
+    import os
+    from . import diag
+    from .http import Http
+    from .telegram import Telegram
+    http = Http()
+    try:
+        tg = Telegram(os.environ["TELEGRAM_BOT_TOKEN"], http)
+        to = os.environ["TELEGRAM_OWNER_ID"] if args.me else os.environ["TELEGRAM_CHANNEL_ID"]
+        n = await diag.test_posts(cfg, conn, tg, to)
+        print(f"отправлено тестовых постов {'в личку' if args.me else 'в канал'}: {n}")
+    finally:
+        await http.close()
+
+
 def cmd_setup(cfg, conn, args):
     """Интерактивно создать или дополнить .env. Уже заполненные значения остаются, пустой ввод их не меняет."""
     import getpass
@@ -105,6 +130,14 @@ def cmd_setup(cfg, conn, args):
         print(f"внимание: {k} пустой")
     p.write_text("".join(f"{k}={v}\n" for k, v in cur.items()), encoding="utf-8")
     print(f".env записан: {p.resolve()}")
+
+
+def cmd_report(cfg, conn, args):
+    from . import overview
+    rep = overview.build(conn, cfg, refresh=args.refresh)
+    path = overview.save(rep)
+    print(overview.to_text(rep))
+    print(f"\nотчёт: {path}; графики на панели: http://127.0.0.1:{cfg['dashboard']['port']}/overview")
 
 
 def cmd_portfolio(cfg, conn, args):
@@ -159,6 +192,11 @@ def main(argv=None):
     t.add_argument("--start")
     t.add_argument("--end")
     sub.add_parser("setup", help="создать или дополнить .env")
+    sub.add_parser("check", help="самопроверка всех частей бота")
+    tp = sub.add_parser("testpost", help="все виды постов с пометкой TEST в канал")
+    tp.add_argument("--me", action="store_true", help="только владельцу в личку")
+    rp = sub.add_parser("report", help="сводный бэктест всех блоков с графиками на панели")
+    rp.add_argument("--refresh", action="store_true", help="заново скачать дневные свечи всех фьючерсов")
     pf = sub.add_parser("portfolio", help="бэктест трендового портфеля")
     pf.add_argument("--start")
     pf.add_argument("--end")
@@ -175,8 +213,14 @@ def main(argv=None):
         asyncio.run(cmd_backfill(cfg, conn, args))
     elif args.cmd == "backtest":
         cmd_backtest(cfg, conn, args)
+    elif args.cmd == "check":
+        asyncio.run(cmd_check(cfg, conn, args))
+    elif args.cmd == "testpost":
+        asyncio.run(cmd_testpost(cfg, conn, args))
     elif args.cmd == "setup":
         cmd_setup(cfg, conn, args)
+    elif args.cmd == "report":
+        cmd_report(cfg, conn, args)
     elif args.cmd == "portfolio":
         cmd_portfolio(cfg, conn, args)
     elif args.cmd == "export":

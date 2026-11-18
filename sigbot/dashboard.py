@@ -24,14 +24,15 @@ button.on{background:#4c8bf5;border-color:#4c8bf5}#c{height:60vh;margin:0 16px}
 .card b{display:block;font-size:20px;margin-top:4px}.muted{color:#8b93a1}
 table{width:calc(100% - 32px);margin:0 16px 24px;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid #232836;text-align:left}
 .bt{color:#b39ddb}.live{color:#4c8bf5}</style></head><body>
-<header><b>sigbot</b><select id="sym"></select>
+<header><b>sigbot</b><a href="overview" id="ov" style="color:#7aa7ff">обзор и бэктест</a><select id="sym"></select>
 <button id="bLive" class="on">Live</button><button id="bBt">Backtest</button>
+<button id="t1h" class="on">1h</button><button id="t1d">1d</button>
 <span class="muted" id="note"></span></header>
 <div id="c"></div><div class="grid" id="stats"></div>
 <table id="tbl"><thead><tr><th>Source</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>R</th></tr></thead><tbody></tbody></table>
 <script>
 const q = new URLSearchParams(location.search); const tok = q.get('token') ? '&token='+q.get('token') : '';
-let source = 'live';
+let source = 'live', tf = '1h';
 const chart = LightweightCharts.createChart(document.getElementById('c'), {autoSize:true,
   layout:{background:{color:'#0f1115'}, textColor:'#c9ced6'}, grid:{vertLines:{color:'#1b1f27'}, horzLines:{color:'#1b1f27'}},
   timeScale:{timeVisible:true}});
@@ -39,14 +40,21 @@ const s = chart.addCandlestickSeries({upColor:'#26a69a', downColor:'#ef5350', bo
 async function j(u){ const r = await fetch(u + (u.includes('?')?'':'?') + tok); return r.json(); }
 async function load(){
   const sym = document.getElementById('sym').value;
-  s.setData(await j('api/candles?symbol='+sym));
+  s.setData(await j('api/candles?symbol='+sym+'&tf='+tf));
+  const snap = t => tf==='1d' ? Math.floor(t/86400)*86400 : t;
   const tr = await j('api/trades?source='+source+'&symbol='+sym);
   const m = [];
   for (const t of tr) {
     const long = t.side === 'long', col = source==='live' ? '#4c8bf5' : '#b39ddb';
-    m.push({time:t.entry_time, position: long?'belowBar':'aboveBar', color:col, shape: long?'arrowUp':'arrowDown', text:(source==='live'?'':'BT ')+t.side});
-    if (t.exit_time) m.push({time:t.exit_time, position: long?'aboveBar':'belowBar', color: t.r>0?'#26a69a':'#ef5350',
+    m.push({time:snap(t.entry_time), position: long?'belowBar':'aboveBar', color:col, shape: long?'arrowUp':'arrowDown', text:(source==='live'?'':'BT ')+t.side});
+    if (t.exit_time) m.push({time:snap(t.exit_time), position: long?'aboveBar':'belowBar', color: t.r>0?'#26a69a':'#ef5350',
       shape:'circle', text:(t.r>0?'+':'')+t.r.toFixed(2)+'R'});
+  }
+  for (const k of await j('api/marks?symbol='+sym+'&source='+source)) {
+    const live = k.kind==='portfolio_live', pre = live ? 'P ' : 'BT P ';
+    if (k.side === 0) m.push({time:snap(k.time), position:'aboveBar', color:'#8b93a1', shape:'circle', text:pre+'exit'});
+    else m.push({time:snap(k.time), position: k.side>0?'belowBar':'aboveBar', color: k.side>0?'#3ddc97':'#ff6b6b',
+            shape: k.side>0?'arrowUp':'arrowDown', text:pre+(k.side>0?'long':'short')});
   }
   m.sort((a,b)=>a.time-b.time); s.setMarkers(m);
   const all = await j('api/trades?source='+source);
@@ -56,10 +64,15 @@ async function load(){
   document.getElementById('stats').innerHTML = Object.entries(st).map(([k,v]) => `<div class="card"><span class="muted">${k}</span><b>${v}</b></div>`).join('');
   document.getElementById('note').textContent = source==='live' ? 'Live journal: only these go to the channel' : 'Backtest: never published';
 }
+for (const [id,t] of [['t1h','1h'],['t1d','1d']]) document.getElementById(id).onclick = () => {
+  tf = t; document.getElementById('t1h').classList.toggle('on', t==='1h'); document.getElementById('t1d').classList.toggle('on', t==='1d');
+  chart.applyOptions({timeScale:{timeVisible: t==='1h'}}); load(); };
 for (const [id,src] of [['bLive','live'],['bBt','backtest']]) document.getElementById(id).onclick = () => {
   source = src; document.getElementById('bLive').classList.toggle('on', src==='live'); document.getElementById('bBt').classList.toggle('on', src==='backtest'); load(); };
 (async () => { const syms = await j('api/symbols'); const sel = document.getElementById('sym');
-  sel.innerHTML = syms.map(x=>`<option>${x}</option>`).join(''); sel.onchange = load; load(); })();
+  sel.innerHTML = syms.map(x=>`<option>${x}</option>`).join(''); if (q.get('symbol')) sel.value = q.get('symbol');
+  document.getElementById('ov').href = 'overview' + (q.get('token') ? '?token='+q.get('token') : '');
+  sel.onchange = load; load(); })();
 </script></body></html>"""
 
 
@@ -87,6 +100,15 @@ def make_app(cfg, conn) -> web.Application:
 
     async def candles(request):
         sym = request.query.get("symbol", "BTCUSDT")
+        if request.query.get("tf") == "1d":   # дневки из часовых за всю историю: видно позиции портфеля
+            rows = conn.execute("SELECT ts / 86400000 * 86400 AS d, ts, open, high, low, close FROM candles "
+                                "WHERE symbol=? AND market='futures' AND tf='1h' ORDER BY ts", (sym,)).fetchall()
+            out = {}
+            for d, _ts, o, h, lo, c in rows:
+                x = out.get(d)
+                out[d] = [o, h, lo, c] if x is None else [x[0], max(x[1], h), min(x[2], lo), c]
+            return web.json_response([{"time": d, "open": v[0], "high": v[1], "low": v[2], "close": v[3]}
+                                      for d, v in out.items()])
         rows = conn.execute("SELECT ts, open, high, low, close FROM candles WHERE symbol=? AND market='futures' "
                             "AND tf='1h' ORDER BY ts DESC LIMIT 2000", (sym,)).fetchall()
         return web.json_response([{"time": r[0] // 1000, "open": r[1], "high": r[2], "low": r[3], "close": r[4]}
@@ -154,6 +176,50 @@ def make_app(cfg, conn) -> web.Application:
                                 risk_pct=r["risk_pct"], leverage=r["leverage"])
         return web.Response(body=await chart.render_png(html), content_type="image/png")
 
+    async def overview_page(_):
+        return web.Response(text=(STATIC / "overview.html").read_text(encoding="utf-8"), content_type="text/html")
+
+    async def overview_api(_):
+        f = Path("reports/overview.json")
+        return web.json_response(json.loads(f.read_text()) if f.exists() else {})
+
+    async def live_api(_):
+        import time as _t
+        day = conn.execute("SELECT MAX(day) FROM portfolio_weights").fetchone()[0]
+        pos = [{"symbol": r[0], "w": r[1]} for r in conn.execute(
+            "SELECT symbol, weight FROM portfolio_weights WHERE day=? ORDER BY ABS(weight) DESC", (day,))] if day else []
+        eq = conn.execute("SELECT equity FROM portfolio_equity ORDER BY day DESC LIMIT 1").fetchone()
+        lo = [dict(r) for r in conn.execute("SELECT symbol, entry, stop, exit_due_ts FROM listing_trades WHERE status='open'")]
+        posts = [{"ts": _t.strftime("%m-%d %H:%M", _t.gmtime(r["ts"] / 1000)), "kind": r["kind"], "status": r["status"],
+                  "text": __import__("html").escape(r["text"][:90].replace("\n", " "))}
+                 for r in conn.execute("SELECT ts, kind, status, text FROM posts ORDER BY id DESC LIMIT 15")]
+        leader = conn.execute("SELECT value FROM settings WHERE key='leader_name'").fetchone()
+        return web.json_response({"mode": settings.effective(cfg, conn)["publishing"]["mode"], "positions": pos,
+                                  "paper_total_pct": round((eq[0] - 1) * 100, 2) if eq else 0.0, "listings_open": lo,
+                                  "posts": posts, "last_post": posts[0]["ts"] + " " + posts[0]["status"] if posts else None,
+                                  "leader": json.loads(leader[0]) if leader else None})
+
+    async def marks_api(request):
+        """Маркеры для графика монеты: позиции портфеля (бэктест и живые) и шорты листингов."""
+        sym = request.query.get("symbol", "BTCUSDT")
+        out = []
+        f = Path("reports/overview.json")
+        if f.exists() and request.query.get("source") == "backtest":
+            rep = json.loads(f.read_text())
+            for t, side in rep.get("portfolio_marks", {}).get(sym, []):
+                out.append({"time": t, "kind": "portfolio", "side": side})
+        rows = conn.execute("SELECT day, weight FROM portfolio_weights WHERE symbol=? ORDER BY day", (sym,)).fetchall()
+        prev, last_day = 0, None
+        days = [r[0] for r in conn.execute("SELECT DISTINCT day FROM portfolio_weights ORDER BY day")]
+        wmap = dict(rows)
+        for day in days:                                   # день без строки по монете = позиции нет
+            w = wmap.get(day, 0)
+            sd = 1 if w > 0.001 else -1 if w < -0.001 else 0
+            if sd != prev:
+                out.append({"time": day // 1000 + 86400, "kind": "portfolio_live", "side": sd})
+                prev = sd
+        return web.json_response(out)
+
     async def health(_):
         rows = conn.execute("SELECT component, status, detail, MAX(ts) AS ts FROM health GROUP BY component").fetchall()
         return web.json_response({r["component"]: {"status": r["status"], **json.loads(r["detail"])} for r in rows})
@@ -165,6 +231,10 @@ def make_app(cfg, conn) -> web.Application:
     app.router.add_get("/api/trades", trades)
     app.router.add_get("/api/stats", stats)
     app.router.add_get("/api/health", health)
+    app.router.add_get("/overview", overview_page)
+    app.router.add_get("/api/overview", overview_api)
+    app.router.add_get("/api/live", live_api)
+    app.router.add_get("/api/marks", marks_api)
     app.router.add_get(r"/chart/{sid:\d+}.png", signal_png)
     app.router.add_static("/static", STATIC)
     return app

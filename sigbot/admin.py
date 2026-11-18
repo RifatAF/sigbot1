@@ -38,6 +38,8 @@ class Admin:
                 f"Signals/day: {e['scanner']['max_signals_per_day']}")
         rows = [
             [("📊 Status", "status"), ("🩺 Health", "health")],
+            [("✅ Self-check", "selfcheck")],
+            [("🧪 Test → channel", "testposts:ch"), ("🧪 Test → me", "testposts:me")],
             [("🔁 Mode", "mode"), ("⏸ Pause" if not p.get("paused") else "▶️ Resume", "pause")],
             [("⚖️ Risk", "risk"), ("📐 Leverage", "lev")],
             [("🪙 Coins", "coins"), ("🕒 Schedule", "sched")],
@@ -136,6 +138,17 @@ class Admin:
             return await self.show(chat, (self.status_text(), kb([[("⬅️ Back", "menu")]])), mid)
         if data == "health":
             return await self.show(chat, (self.health_text(), kb([[("⬅️ Back", "menu")]])), mid)
+        if data == "selfcheck":
+            from . import diag
+            await self.tg.send_message(chat, "Checking…", parse_mode=None)
+            rows = await diag.selfcheck(self.cfg, self.conn, self.tg.http)
+            return await self.tg.send_message(chat, diag.format_check(rows), parse_mode=None)
+        if data.startswith("testposts"):
+            from . import diag
+            to = self.pub.channel_id if data.endswith(":ch") else chat
+            n = await diag.test_posts(self.cfg, self.conn, self.tg, to)
+            return await self.tg.send_message(chat, f"🧪 Test posts sent: {n} ({'channel' if to != chat else 'here'}).",
+                                              parse_mode=None)
         if data == "mode":
             return await self.show(chat, self.mode_screen(), mid)
         if data.startswith("setmode:"):
