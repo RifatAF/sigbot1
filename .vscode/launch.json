@@ -1,0 +1,9 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {"name": "sigbot: запуск бота", "type": "debugpy", "request": "launch", "module": "sigbot", "args": ["run"], "console": "integratedTerminal", "cwd": "${workspaceFolder}"},
+    {"name": "sigbot: настроить .env", "type": "debugpy", "request": "launch", "module": "sigbot", "args": ["setup"], "console": "integratedTerminal", "cwd": "${workspaceFolder}"},
+    {"name": "sigbot: загрузить историю", "type": "debugpy", "request": "launch", "module": "sigbot", "args": ["backfill"], "console": "integratedTerminal", "cwd": "${workspaceFolder}"},
+    {"name": "sigbot: бэктест портфеля", "type": "debugpy", "request": "launch", "module": "sigbot", "args": ["portfolio"], "console": "integratedTerminal", "cwd": "${workspaceFolder}"}
+  ]
+}
