@@ -66,7 +66,7 @@ class Admin:
             [("🪙 Монеты", "coins"), ("🕒 Расписание", "sched")],
             [("🧾 Итоги недели", "pm"), ("📤 Сделки в Excel", "export")],
             [("🗣 Блогеры", "blog"), ("📌 Пост о методе", "method")],
-            [("📱 Панель на телефоне", "phone")],
+            [("📈 Сделки на графике", "snaps"), ("📱 Панель на телефоне", "phone")],
             [("💻 Компьютеры", "pcs"), ("❓ Помощь", "help")],
             [("✅ Снять аварийную остановку" if p.get("kill_switch") else "⛔ Аварийная остановка", "kill")],
         ]
@@ -93,6 +93,34 @@ class Admin:
                 f"Панель с графиками: http://127.0.0.1:{self.cfg['dashboard']['port']} на компьютере с ботом. "
                 "📱 <b>Панель на телефоне</b>: присылает ссылку с ключом, работает и с мобильного интернета.")
         return text, kb([self.BACK])
+
+    async def snaps_screen(self):
+        """Открытые и последние закрытые сигналы кнопками: нажал, бот прислал картинку графика."""
+        from . import snap
+        try:
+            items = await snap.feed(self.cfg["dashboard"]["port"])
+        except Exception as e:
+            return f"Панель не отвечает: {escape(str(e)[:100])}", kb([self.BACK])
+        op = sorted([x for x in items if x.get("open")], key=lambda x: -x["entry_time"])[:12]
+        cl = sorted([x for x in items if not x.get("open")], key=lambda x: -(x.get("exit_time") or 0))[:6]
+        rows = [[(snap.label(x), f"snap:{x['symbol']}:{x['entry_time']}")] for x in op + cl]
+        text = ("📈 <b>Сделки на графике</b>\n\nНажми на сделку: пришлю картинку графика со входом, целями, стопом и итогом. "
+                f"Сверху {len(op)} открытых, ниже последние закрытые.") if rows else "Сделок пока нет."
+        return text, kb(rows + [self.BACK])
+
+    async def send_snap(self, chat, data: str):
+        from . import snap
+        _, sym, t = data.split(":")
+        port = self.cfg["dashboard"]["port"]
+        items = await snap.feed(port)
+        it = next((x for x in items if x["symbol"] == sym and str(x["entry_time"]) == t), None)
+        if not it:
+            return await self.tg.send_message(chat, "Сделка не найдена, открой список заново.")
+        try:
+            png = await snap.render(port, "live", sym, int(t))
+        except Exception as e:
+            return await self.tg.send_message(chat, snap.caption(it) + f"\n\n(картинка не получилась: {escape(str(e)[:120])})")
+        await self.tg.send_photo(chat, png, snap.caption(it))
 
     async def phone_screen(self):
         from . import phone
@@ -312,6 +340,10 @@ class Admin:
             return
         if data == "help":
             return await self.show(chat, self.help_screen(), mid)
+        if data == "snaps":
+            return await self.show(chat, await self.snaps_screen(), mid)
+        if data.startswith("snap:"):
+            return await self.send_snap(chat, data)
         if data == "phone_new":
             from . import phone
             phone.stop()

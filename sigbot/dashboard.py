@@ -66,6 +66,8 @@ label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center;cu
 .cards b{display:block;font-size:17px;margin-top:3px;font-variant-numeric:tabular-nums}
 .ce{border-color:var(--b)!important}.cs{border-color:var(--r)!important}.ct{border-color:var(--g)!important}
 .nav{display:flex;gap:8px;align-items:center;margin-left:auto}
+body.shot header,body.shot #status,body.shot .how,body.shot .kpi,body.shot main>section:first-child,body.shot .nav,body.shot #dhead label{display:none!important}
+body.shot .why{display:none}body.shot main{grid-template-columns:1fr;padding:8px}body.shot .wrap{height:380px}
 </style></head><body>
 <header><b>sigbot</b>
 <span class="seg"><button data-src="live">Живые</button><button data-src="backtest">История (бэктест)</button></span>
@@ -92,6 +94,7 @@ label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center;cu
 <script>
 const q = new URLSearchParams(location.search), tok = q.get('token') ? 'token='+q.get('token') : '';
 const S = {source: q.get('source') || 'live', kind: 'all', open: false, text: ''};
+if (q.get('shot')) document.body.classList.add('shot');
 let F = {items: [], summary: {}}, view = [], cur = null, shown = 150, cs = [], times = [], tf = '1d', ST = {};
 const $ = id => document.getElementById(id), G = '#3ddc97', R = '#ff6b6b', B = '#5b8cff';
 const KIND = {trend: '🧭 Тренд', capitulation: '⚡ Капитуляция', listing: '🆕 Шорт листинга'};
@@ -252,6 +255,9 @@ async function load(){
   document.querySelectorAll('[data-src]').forEach(b => b.classList.toggle('on', b.dataset.src===S.source));
   document.querySelectorAll('#kinds button, #how div').forEach(b => b.classList.toggle('on', b.dataset.k===S.kind));
   F = await j('api/feed?source='+S.source); F.items = F.items || []; filter(); renderKpi(); renderList();
+  const pick = q.get('pick');                     // ?pick=SYMBOL:время входа — открыть сразу эту сделку (картинка для Telegram)
+  if (pick) { const [ps, pt] = pick.split(':'); const it = F.items.find(x => x.symbol===ps && String(x.entry_time)===pt);
+    if (it) { if (!view.includes(it)) view.unshift(it); await select(it); setTimeout(() => { redraw(); window.__ready = true; }, 400); return; } }
   if (view.length) select(view[0]); else { cur = null; s.setData([]); s.setMarkers([]); redraw(); $('ttl').textContent='Нет сигналов'; $('story').innerHTML=''; $('cards').innerHTML=''; $('bdg').innerHTML=''; $('kindname').textContent=''; }
 }
 function setKind(k){ S.kind = S.kind===k && k!=='all' ? 'all' : k; load(); }
