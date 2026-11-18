@@ -87,28 +87,20 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
 
 
 async def auto_update(pub):
-    """Раз в час: если в ветке на GitHub есть новые коммиты, выйти. run_sigbot.bat (или systemd) подтянет код
-    git pull, обновит зависимости и запустит бота заново. Выключить: AUTO_UPDATE=0 в .env."""
-    import subprocess
-    if os.environ.get("AUTO_UPDATE", "1") == "0":
+    """Раз в 2 минуты: есть новые изменения на GitHub, значит пишем владельцу и выходим с кодом 3.
+    Сторож (updater.supervise) скачивает их и сразу запускает бота заново. Выключить: AUTO_UPDATE=0 в .env."""
+    from . import updater
+    if os.environ.get("AUTO_UPDATE", "1") == "0" or not os.environ.get("SIGBOT_CHILD"):
         return
     while True:
-        await asyncio.sleep(3600)
+        await asyncio.sleep(int(os.environ.get("SIGBOT_UPDATE_SECONDS", 120)))
         try:
-            run = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, timeout=120)
-            if run("fetch", "--quiet").returncode != 0:
-                continue
-            ahead = run("rev-list", "--count", "HEAD..@{u}").stdout.strip()
-            if ahead and ahead != "0":
-                if os.environ.get("SIGBOT_SUPERVISED"):   # run_sigbot.bat сам подтянет код и перезапустит
-                    log.warning("auto update: %s new commits, restarting", ahead)
-                    await pub.notify_owner(f"🔄 Обновление: {ahead} новых изменений, перезапуск за минуту.")
-                    os._exit(0)
-                # запуск из VS Code: перезапустить некому, поэтому только скачиваем и просим перезапустить
-                if run("pull", "--ff-only").returncode == 0:
-                    msg = "🔄 Скачано обновление бота. Перезапусти его: Shift+F5, затем F5."
-                    print("\n" + msg + "\n", flush=True)
-                    await pub.notify_owner(msg)
+            new = await asyncio.to_thread(updater.pending)
+            if new:
+                msg = "🔄 Ставлю обновление, бот перезапустится за 10–30 секунд:\n" + "\n".join("• " + x[:160] for x in new[:3])
+                print("\n" + msg, flush=True)
+                await pub.notify_owner(msg)
+                os._exit(updater.UPDATE_EXIT)
         except Exception as e:
             log.warning("auto update check: %s", e)
 
@@ -174,7 +166,9 @@ async def run(cfg, conn):
         admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col, leader)
         tasks.append(asyncio.create_task(_guard("admin", admin.loop)))
         tasks.append(asyncio.create_task(_guard("leader", leader.loop)))
-        await pub.notify_owner(f"✅ Бот запущен на компьютере {leader.name}, он основной. Настройки: /menu")
+        upd = os.environ.pop("SIGBOT_UPDATED", None)
+        await pub.notify_owner((f"{upd}\n\n" if upd else "") +
+                               f"✅ Бот запущен на компьютере {leader.name}, он основной. Настройки: /menu")
     tasks.append(asyncio.create_task(_guard("heartbeat", lambda: heartbeat(conn, leader))))
     from . import autoprep
     asyncio.create_task(autoprep.run(cfg, conn, http))

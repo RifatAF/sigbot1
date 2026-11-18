@@ -185,6 +185,11 @@ def cmd_health(cfg, conn, args):
 
 
 def cmd_run(cfg, conn, args):
+    import os
+    if not os.environ.get("SIGBOT_CHILD") and os.environ.get("AUTO_UPDATE", "1") != "0":
+        from . import updater           # сторож: бот в дочернем процессе, обновления ставятся сами
+        conn.close()
+        raise SystemExit(updater.supervise())
     from .app import run
     asyncio.run(run(cfg, conn))
 
