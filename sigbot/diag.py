@@ -160,7 +160,7 @@ async def test_posts(cfg, conn, tg, chat_id) -> int:
     from .bloggers import Bloggers
     mode = "paper"
     sent = 0
-    T = "🧪 <b>TEST post</b>, not a real signal\n\n"
+    T = "🧪 <b>Тестовый пост</b>, не настоящий сигнал\n\n"
     now = int(time.time() * 1000)
     sym = "BTCUSDT"
     df = features.build(conn, sym, now - 200 * HOUR, now).reset_index(drop=True)
@@ -174,13 +174,14 @@ async def test_posts(cfg, conn, tg, chat_id) -> int:
            "mode": mode, "features": {"setup": "capitulation", "drop_sigma": 3.1, "divergences": ["regular bullish cvd_spot"],
                                       "trend_4h": 1, "fear_greed": 24}}
     zones = Bloggers(cfg, conn).zones_for(sym, entry)
-    text, _ = templates.signal(sig, "Spot buyers absorbed the drop while futures sold.", zones)
+    lang = settings.effective(cfg, conn)["publishing"].get("lang", "en")
+    text, _ = templates.signal(sig, "Spot buyers absorbed the drop while futures sold.", zones, lang=lang)
     html = chart.build_html(sym, "long", chart.candles_from_df(df, 96), lv, zones, None, subtitle="Strength 0.72 · TEST",
                             risk_pct=1.5, leverage=3.2)
     await tg.send_photo(chat_id, await chart.render_png(html), T + text)
     sent += 1
     for ev, px, tot in (("tp1", lv["tp1"], None), ("breakeven", entry, None), ("tp2", lv["tp2"], 1.85)):
-        text, _ = templates.update(sig, ev, px, tot)
+        text, _ = templates.update(sig, ev, px, tot, lang=lang, pnl_pct=None if tot is None else tot * 1.5)
         await tg.send_message(chat_id, T + text)
         sent += 1
     syms = settings.get(conn, "universe", [])
@@ -194,20 +195,27 @@ async def test_posts(cfg, conn, tg, chat_id) -> int:
         side = "long" if w2 > 0 else "short"
         lv = feed.exit_level(C[sym2].dropna().values, 1 if w2 > 0 else -1, cfg["portfolio"]) if sym2 in C else None
         px = float(C[sym2].dropna().iloc[-1]) if sym2 in C else entry
+        sd = 1 if w2 > 0 else -1
+        a = float(C[sym2].dropna().diff().abs().tail(14).mean()) * 1.3 if sym2 in C else px * 0.03
+        pl = feed.levels(px, a, sd, feed.plan_cfg(cfg["portfolio"]))
         text, _ = templates.trend_signal(sym2, side, px, abs(w2) * 100, lv, mode,
-                                         {"win_pct": 38, "avg_win": 2.01, "avg_loss": -0.68})
+                                         {"win_pct": 39, "avg_win": 1.67, "avg_loss": -0.68}, pl, lang)
         await tg.send_message(chat_id, T + text)
-        text, _ = templates.trend_exit(sym2, side, px, px * 1.08, 8.0, abs(w2) * 8, 9, mode)
+        text, _ = templates.trade_event(sym2, side, "tp1", pl["tp1"], px, 0.25, 0.75, pl["stop"], mode, lang)
         await tg.send_message(chat_id, T + text)
-        sent += 2
+        ex = [{"what": "tp1", "price": pl["tp1"]}, {"what": "tp2", "price": pl["tp2"]},
+              {"what": "trend", "price": px * (1 + sd * 0.09)}]
+        text, _ = templates.trade_closed(sym2, side, px, ex, abs(w2) * 6.5, 21, mode, lang)
+        await tg.send_message(chat_id, T + text)
+        sent += 3
     lc = cfg["listings"]
-    text, _ = templates.listing_signal("NEWCOINUSDT", 0.4321, 0.4321 * (1 + lc["stop_pct"] / 100), lc, mode)
+    text, _ = templates.listing_signal("NEWCOINUSDT", 0.4321, 0.4321 * (1 + lc["stop_pct"] / 100), lc, mode, lang)
     await tg.send_message(chat_id, T + text)
-    text, _ = templates.listing_exit("NEWCOINUSDT", 0.4321, 0.3105, "time", 1.27, mode)
+    text, _ = templates.listing_exit("NEWCOINUSDT", 0.4321, 0.3105, "time", 1.27, mode, lang, 60)
     await tg.send_message(chat_id, T + text)
     sent += 2
     m = {"btc_price": entry, "btc_change_24h": float((df.close.iloc[-1] / df.close.iloc[-25] - 1) * 100),
          "open_trades": 0, "signals_today": 0, "fear_greed": None, "avg_funding_pct": None, "coinbase_premium_pct": None}
-    text, _ = templates.daily_note(m, "")
+    text, _ = templates.daily_note(m, "", lang)
     await tg.send_message(chat_id, T + text)
     return sent + 1

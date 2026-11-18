@@ -50,7 +50,13 @@ label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center;cu
 .wrap{position:relative;height:430px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 #c{position:absolute;inset:0}#ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
 #empty{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;text-align:center;color:var(--mut);padding:20px;background:var(--bg)}
-.story{margin:10px 0;padding:10px 14px;border-radius:8px;background:#11161f;line-height:1.55;color:#c7cdd8}
+.story{margin:10px 0}.why{margin-top:8px;padding:8px 12px;border-radius:8px;background:#11161f;color:#a9b1c2;font-size:13px;line-height:1.5}
+.tk{background:#11161f;border-radius:10px;overflow:hidden}
+.tr{display:grid;grid-template-columns:96px 110px 70px 1fr;gap:10px;align-items:center;padding:8px 12px;border-left:3px solid transparent;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.tr span{color:var(--mut);font-size:13px}.tr b{font-size:16px}.tr i{font-style:normal;color:var(--mut);font-size:13px}.tr em{font-style:normal;font-size:13px;color:#c7cdd8}
+.tr.miss{opacity:.6}.tr.hit em{color:var(--g)}.tr.bad em{color:var(--r)}
+.tr.tot{grid-template-columns:96px 1fr;border-bottom:0;background:#151b27}.tr.tot em{font-size:15px}.tr.tot b{font-size:18px}
+@media(max-width:600px){.tr{grid-template-columns:70px 1fr 60px;}.tr em{grid-column:1/-1;margin-top:-4px}}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
 .cards div{background:#11161f;border-radius:8px;padding:8px 12px;border-left:3px solid #2b3345}.cards span{color:var(--mut);font-size:11px;text-transform:uppercase}
 .cards b{display:block;font-size:17px;margin-top:3px;font-variant-numeric:tabular-nums}
@@ -62,7 +68,7 @@ label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center;cu
 <span class="mut" id="sub"></span><span style="flex:1"></span><a href="overview" id="ovl">сводный отчёт →</a></header>
 <div id="status"></div>
 <div class="how" id="how">
-<div data-k="trend"><b>🧭 Тренд</b> · основная прибыль, около 1 сигнала в день. Вход на дневном закрытии, держим, пока тренд жив. Цели нет, выход при закрытии дня за «уровнем выхода».</div>
+<div data-k="trend"><b>🧭 Тренд</b> · основная прибыль, около 1 сигнала в день. Вход на дневном закрытии, стоп и две цели: на TP1 и TP2 закрываем по четверти, половину держим, пока жив тренд.</div>
 <div data-k="capitulation"><b>⚡ Капитуляция</b> · редкий часовой сигнал после сильного слива с падением открытого интереса. Есть стоп и две цели.</div>
 <div data-k="listing"><b>🆕 Шорт листинга</b> · шорт новых монет на фьючерсах, если первый день слабый. Держим до 60 дней, широкий стоп +50%.</div>
 </div>
@@ -96,7 +102,7 @@ const chart = LightweightCharts.createChart($('c'), {autoSize:true, layout:{back
   localization:{priceFormatter: p => p <= 0 ? '' : px(p)}});
 const s = chart.addCandlestickSeries({upColor:G, downColor:R, borderVisible:false, wickUpColor:G, wickDownColor:R, priceLineVisible:false});
 s.applyOptions({autoscaleInfoProvider: o => { const r = o(), t = cur; if (!r || !t) return r;
-  const lv = [t.stop, t.tp2, t.exit_level].filter(v => v != null && v > 0); if (!lv.length) return r;
+  const lv = [t.stop, t.tp1, t.tp2, t.exit_level].filter(v => v != null && v > 0); if (!lv.length) return r;
   return {priceRange:{minValue: Math.min(r.priceRange.minValue, ...lv), maxValue: Math.max(r.priceRange.maxValue, ...lv)}}; }});
 const step = () => tf==='1d' ? 86400 : 3600, snap = x => Math.floor(x/step())*step();
 function idx(t){ let lo=0, hi=times.length; while(lo<hi){const m=(lo+hi)>>1; if(times[m]<t) lo=m+1; else hi=m;} return lo; }
@@ -113,19 +119,18 @@ function draw(){
   const t = cur; if (!t || !times.length) return;
   const x1 = xOf(t.entry_time), x2 = Math.max(xOf(t.exit_time || times[times.length-1] + step()), x1 + 4), y = p => s.priceToCoordinate(p);
   if (x1 == null) return;
-  const c = t.side==='long' ? '61,220,151' : '255,107,107';
-  if (t.kind === 'capitulation') {
-    const ye=y(t.entry), ys=y(t.stop), y1=y(t.tp1), y2=y(t.tp2);
-    g.fillStyle='rgba(61,220,151,.15)'; g.fillRect(x1, Math.min(ye,y2), x2-x1, Math.abs(y2-ye));
-    g.fillStyle='rgba(255,107,107,.18)'; g.fillRect(x1, Math.min(ye,ys), x2-x1, Math.abs(ys-ye));
-    hline(x1,x2,y2,G); hline(x1,x2,y1,G,[3,3]); hline(x1,x2,ye,B); hline(x1,x2,ys,R);
-    chip(x2+6,y2,'TP2 '+px(t.tp2),G); chip(x2+6,y1,'TP1 '+px(t.tp1),G); chip(x2+6,ye,'Вход '+px(t.entry),'#7aa7ff'); chip(x2+6,ys,'Стоп '+px(t.stop),R);
-    return; }
-  g.fillStyle=`rgba(${c},.09)`; g.fillRect(x1, 0, x2-x1, H); g.fillStyle=`rgba(${c},.9)`; g.fillRect(x1, 0, x2-x1, 4);
-  hline(x1, x2, y(t.entry), B); chip(Math.max(x1-4,2) , y(t.entry) + (t.side==='long'?16:-16), 'Вход '+px(t.entry), '#7aa7ff');
-  if (t.exit != null && !t.open) chip(x2+6, y(t.exit), 'Выход '+px(t.exit), (t.move_pct ?? t.result_pct) > 0 ? G : R);
-  if (t.stop) { hline(x1, x2, y(t.stop), R, [5,4]); chip(x2+6, y(t.stop), 'Стоп '+px(t.stop), R); }
-  if (t.open && t.exit_level) { hline(x1, W, y(t.exit_level), '#ffd27a', [6,4]); chip(W-150, y(t.exit_level)-14, 'Уровень выхода '+px(t.exit_level), '#ffd27a'); }
+  const c = t.side==='long' ? '61,220,151' : '255,107,107', ye = y(t.entry);
+  g.fillStyle=`rgba(${c},.06)`; g.fillRect(x1, 0, x2-x1, H); g.fillStyle=`rgba(${c},.9)`; g.fillRect(x1, 0, x2-x1, 3);
+  const top = t.tp2 ?? t.tp1;
+  if (top != null) { g.fillStyle='rgba(61,220,151,.13)'; g.fillRect(x1, Math.min(ye,y(top)), x2-x1, Math.abs(y(top)-ye)); }
+  if (t.stop != null) { g.fillStyle='rgba(255,107,107,.15)'; g.fillRect(x1, Math.min(ye,y(t.stop)), x2-x1, Math.abs(y(t.stop)-ye)); }
+  const chips = [];
+  const lvl = (p, name, col, dash) => { if (p == null) return; hline(x1, x2, y(p), col, dash); chips.push([y(p), `${name} ${px(p)}  ${sg(pctFrom(t,p))}`, col]); };
+  lvl(t.tp2, 'TP2', G, [5,3]); lvl(t.tp1, 'TP1', G, [5,3]); lvl(t.stop, 'Стоп', R, [5,3]);
+  hline(x1, x2, ye, B); chips.push([ye, 'Вход ' + px(t.entry), '#7aa7ff']);
+  if (t.open && t.exit_level) { hline(x1, W, y(t.exit_level), '#ffd27a', [2,3]); chips.push([y(t.exit_level), 'Выход по тренду ' + px(t.exit_level), '#ffd27a']); }
+  chips.sort((a,b) => a[0]-b[0]); for (let i = 1; i < chips.length; i++) if (chips[i][0] - chips[i-1][0] < 22) chips[i][0] = chips[i-1][0] + 22;
+  chips.forEach(([yy, txt, col]) => chip(x2 + 6, yy, txt, col));
 }
 const redraw = () => requestAnimationFrame(draw);
 chart.timeScale().subscribeVisibleLogicalRangeChange(redraw); chart.timeScale().subscribeSizeChange(redraw); new ResizeObserver(redraw).observe($('c'));
@@ -135,36 +140,50 @@ async function showChart(t){
   cs = await j('api/candles?symbol='+t.symbol+'&tf='+tf+(tf==='1h' ? '&center='+t.entry_time : ''));
   chart.priceScale('right').applyOptions({autoScale:true});   // новая монета: шкала цены под её цену, даже если шкалу тянули руками
   cs = cs.filter(c => c.open != null); times = cs.map(c => c.time); s.setData(cs);
-  const m = [{time:snap(t.entry_time), position: t.side==='long'?'belowBar':'aboveBar', color:B, shape: t.side==='long'?'arrowUp':'arrowDown', size:2}];
-  if (t.exit_time) m.push({time:snap(t.exit_time), position: t.side==='long'?'aboveBar':'belowBar', color: (t.result_pct ?? t.move_pct) > 0 ? G : R, shape:'circle', size:1});
+  const L = t.side==='long', m = [{time:snap(t.entry_time), position: L?'belowBar':'aboveBar', color:B, shape: L?'arrowUp':'arrowDown', size:2, text: L?'ЛОНГ':'ШОРТ'}];
+  for (const e of t.exits||[]) if (e.t) { const good = e.what==='tp1'||e.what==='tp2'||(e.what!=='sl' && pctFrom(t,e.price) > 0);
+    m.push({time:snap(e.t), position: (good === L) ? 'aboveBar' : 'belowBar', color: good ? G : R, shape:'circle', size:1, text: WHAT[e.what] || e.what}); }
   s.setMarkers(m.filter(x => times.length && x.time >= times[0] && x.time <= times[times.length-1]).sort((a,b)=>a.time-b.time));
   $('empty').style.display = cs.length ? 'none' : 'flex'; $('empty').textContent = 'Нет свечей по монете: история ещё загружается.';
   const end = t.exit_time || times[times.length-1], span = Math.max(end - t.entry_time, step()*(tf==='1d'?20:16));
-  chart.timeScale().setVisibleLogicalRange({from: idx(t.entry_time - span*0.9), to: idx(end + span*0.4) + 3}); redraw();
+  chart.timeScale().setVisibleLogicalRange({from: idx(t.entry_time - span*0.6), to: idx(end + span*0.5) + 12}); redraw();
 }
-// ---------- рассказ о сделке простыми словами
-function story(t){
-  const L = t.side==='long', act = L ? 'купил' : 'продал в шорт', dir = L ? 'вверх' : 'вниз';
-  const held = t.exit_time ? Math.max(1, Math.round((t.exit_time - t.entry_time)/86400)) : Math.max(1, Math.round((Date.now()/1000 - t.entry_time)/86400));
-  if (t.kind === 'trend') return `Бот ${act} ${coin(t.symbol)} по ${px(t.entry)} на дневном закрытии ${day(t.entry_time)}: тренд ${dir} подтвердили почти все дневные сигналы (каналы 10–160 дней и средние). `+
-    `Размер ${t.size_pct}% депозита. ` + (t.open ? `Позиция открыта ${held} дн. Закрываем, если день закроется ${L?'ниже':'выше'} <b>${px(t.exit_level)}</b> (жёлтая линия), уровень сдвигается за трендом.`
-      : `Через ${held} дн. тренд сломался, выход по ${px(t.exit)}: цена прошла ${sg(t.move_pct)} в нашу сторону, итог <b class="${t.result_pct>0?'pos':'neg'}">${sg(t.result_pct,2)} депозита</b>.`);
-  if (t.kind === 'listing') return `${coin(t.symbol)} только появилась на фьючерсах, и первый день закрылся ниже цены открытия. Новые монеты обычно дешевеют первые недели из-за разлоков, поэтому шорт по ${px(t.entry)} на ${t.size_pct}% депозита, стоп ${px(t.stop)}. ` +
-    (t.open ? 'Позиция открыта, выход по времени через 60 дней или по стопу.' : `Закрыта (${t.exit_reason||''}) по ${px(t.exit)}, итог <b class="${t.result_pct>0?'pos':'neg'}">${sg(t.result_pct,2)} депозита</b>.`);
-  return `${coin(t.symbol)} резко упала, а открытый интерес снизился: позиции вынесло, продавцы выдохлись. Бот ${act} по ${px(t.entry)} со стопом ${px(t.stop)} (риск ${t.risk_pct?.toFixed(1)}% депозита), цели ${px(t.tp1)} и ${px(t.tp2)}. ` +
-    (t.open ? 'Сделка открыта.' : `Закрыта: ${({tp2:'цель 2',stop:'стоп',breakeven_stop:'безубыток после цели 1',timeout:'по времени'})[t.exit_reason]||t.exit_reason||''}, итог <b class="${t.r>0?'pos':'neg'}">${t.r>0?'+':''}${t.r?.toFixed(2)}R (${sg(t.result_pct,2)} депозита)</b>.`);
+// ---------- карточка сделки: план и что произошло с каждым уровнем
+const WHAT = {tp1:'TP1', tp2:'TP2', sl:'Стоп', be:'Безубыток', trend:'Тренд сломался', time:'По времени', delist:'Делистинг', invalid:'Идея сломалась', trail:'Трейлинг', manual:'Вручную'};
+const pctFrom = (t, p) => (t.side==='long' ? 1 : -1) * (p / t.entry - 1) * 100;
+const when = (t, ts) => ts ? (t.kind==='capitulation' ? dt(ts) : day(ts)) : '';
+const part = x => x ? Math.round(x*100) + '%' : '';
+function path(t){                                           // короткий итог для списка: TP1 → TP2 → тренд
+  const ex = (t.exits||[]).map(e => e.what==='sl' ? '❌ Стоп' : e.what==='tp1'||e.what==='tp2' ? '✅ '+WHAT[e.what] : WHAT[e.what]||e.what);
+  if (t.open) ex.push('⏳ идёт'); return ex.join(' → ') || '—';
+}
+function why(t){
+  const L = t.side==='long';
+  if (t.kind==='trend') return `Почему: тренд ${L?'вверх':'вниз'} на дневках подтвердили почти все сигналы (каналы 10–160 дней и средние). Размер ${t.size_pct}% депозита.`;
+  if (t.kind==='listing') return `Почему: новая монета на фьючерсах, первый день закрылся ниже открытия. Новые монеты обычно дешевеют первые недели. Размер ${t.size_pct}% депозита, без целей, выход через 60 дней или по стопу.`;
+  return `Почему: резкий слив с падением открытого интереса, позиции вынесло, продавцы выдохлись. Риск ${t.risk_pct?.toFixed(1)}% депозита.`;
+}
+function ticket(t){
+  const ex = t.exits||[], hit = w => ex.find(e => e.what===w), rows = [];
+  rows.push(['Вход', px(t.entry), '', `${t.side==='long'?'🟢 лонг':'🔴 шорт'} · ${when(t, t.entry_time)}`, 'ce']);
+  for (const k of ['tp1','tp2']) if (t[k] != null) { const e = hit(k);
+    rows.push([k.toUpperCase(), px(t[k]), sg(pctFrom(t,t[k])), e ? `✅ взят ${when(t,e.t)}${e.part ? ', закрыто '+part(e.part) : ''}` : t.open ? `⏳ ждём${t[k+'_part'] ? ', закроем '+part(t[k+'_part']) : ''}` : '— не дошла', 'ct', e ? 'hit' : 'miss']); }
+  if (t.stop != null) { const e = hit('sl');
+    rows.push(['Стоп', px(t.stop), sg(pctFrom(t,t.stop)), e ? `❌ сработал ${when(t,e.t)}${e.part && e.part < 1 ? ', закрыто '+part(e.part) : ''}` : t.open ? 'стоит' : 'не задет', 'cs', e ? 'bad' : 'miss']); }
+  const fin = ex.find(e => !['tp1','tp2','sl'].includes(e.what));
+  if (fin) rows.push([`Остаток ${part(fin.part)}`, px(fin.price), sg(pctFrom(t,fin.price)), `${WHAT[fin.what]||fin.what} · ${when(t,fin.t)}`, '', pctFrom(t,fin.price) > 0 ? 'hit' : 'bad']);
+  else if (t.open && t.kind==='trend') rows.push([`Остаток ${part(t.rem ?? 1)}`, px(t.exit_level), '', `держим, пока жив тренд: выход, если день закроется ${t.side==='long'?'ниже':'выше'}`, '', 'miss']);
+  else if (t.open && t.kind==='listing') rows.push(['Выход', '', '', 'через 60 дней после входа или по стопу', '', 'miss']);
+  const res = t.result_pct, R = t.kind==='capitulation' && t.r != null ? ` · ${t.r>0?'+':''}${t.r.toFixed(2)}R` : '';
+  const total = res == null ? 'считается' : `<b class="${res>0?'pos':'neg'}">${sg(res,2)} депозита</b>${t.move_pct!=null ? ` <span class="mut">(цена в среднем ${sg(t.move_pct,1)})</span>` : ''}${R}`;
+  return `<div class="tk">${rows.map(([a,b,c,d,cl,st]) => `<div class="tr ${cl} ${st||''}"><span>${a}</span><b>${b}</b><i>${c}</i><em>${d}</em></div>`).join('')}
+    <div class="tr tot"><span>${t.open ? 'Итог сейчас' : 'Итог'}</span><em>${total}</em></div></div>`;
 }
 async function select(t){
   cur = t; renderList(false);
   $('ttl').textContent = coin(t.symbol); $('bdg').innerHTML = `<span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>`;
-  $('kindname').textContent = KIND[t.kind] + ' · ' + (t.kind==='capitulation' ? dt(t.entry_time)+' UTC' : day(t.entry_time)) + (t.open ? ' · открыта' : '');
-  $('story').innerHTML = story(t);
-  const c = t.kind==='capitulation'
-    ? [['Вход',px(t.entry),'ce'],['Стоп',px(t.stop),'cs'],['Цель 1',px(t.tp1),'ct'],['Цель 2',px(t.tp2),'ct'],['Риск',(t.risk_pct?.toFixed(1)||'—')+'%',''],['Итог',t.r==null?'открыта':(t.r>0?'+':'')+t.r.toFixed(2)+'R','']]
-    : [['Вход',px(t.entry),'ce'], t.open ? (t.kind==='listing' ? ['Стоп',px(t.stop),'cs'] : ['Уровень выхода',px(t.exit_level),'cs']) : ['Выход',px(t.exit),''], ['Размер',(t.size_pct??'—')+'% депо',''],
-       ['Движение цены',sg(t.move_pct),''],[t.open?'Итог сейчас':'Итог',sg(t.result_pct,2)+' депо',''],
-       ['Дней',t.exit_time?Math.max(1,Math.round((t.exit_time-t.entry_time)/86400)):'идёт','']];
-  $('cards').innerHTML = c.map(([k,v,cl]) => `<div class="${cl}"><span>${k}</span><b>${v}</b></div>`).join('');
+  $('kindname').textContent = KIND[t.kind] + ' · ' + when(t, t.entry_time) + (t.kind==='capitulation' ? ' UTC' : '') + (t.open ? ' · открыта' : '');
+  $('story').innerHTML = ticket(t) + `<div class="why">${why(t)}</div>`; $('cards').innerHTML = '';
   const i = view.indexOf(t); $('prev').disabled = i >= view.length-1; $('next').disabled = i <= 0;
   await showChart(t);
 }
@@ -178,7 +197,7 @@ function renderList(reset=true){
   $('list').innerHTML = view.slice(0, shown).map((t,i) => { const res = t.kind==='capitulation' && t.r!=null ? t.r : t.result_pct;
     return `<div class="row ${t===cur?'sel':''}" data-i="${i}"><div class="d">${day(t.entry_time)}<br>${KIND[t.kind].split(' ')[0]}</div>
     <div><span class="c">${coin(t.symbol)}</span><span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>${t.open?'<span class="pill">открыта</span>':''}
-    <div class="t">${KIND[t.kind].slice(2)}${t.size_pct?' · '+t.size_pct+'% депо':''}${t.risk_pct?' · риск '+t.risk_pct.toFixed(1)+'%':''}</div></div>
+    <div class="t">вход ${px(t.entry)} · ${path(t)}</div></div>
     <div class="res ${(t.result_pct ?? 0)>0?'pos':'neg'}">${t.open ? (t.result_pct!=null ? sg(t.result_pct,2)+'<small>сейчас, депо</small>' : '—') :
       t.kind==='capitulation' && t.r!=null ? (t.r>0?'+':'')+t.r.toFixed(1)+'R<small>'+sg(t.result_pct,2)+' депо</small>' : sg(t.result_pct,2)+'<small>депозита</small>'}</div></div>`; }).join('')
     + (view.length > shown ? `<button class="more" id="more">показать ещё (${view.length - shown})</button>` : '')
@@ -190,7 +209,7 @@ function renderKpi(){
   const k = S.kind==='all' ? 'all' : S.kind, m = (F.summary||{})[k] || {}, te = F.trend_equity;
   const cards = [['Сигналов', m.signals ?? 0], ['В месяц', m.per_month ?? 0], ['Открыто', m.open ?? 0], ['В плюс', (m.win_pct ?? 0)+'%'],
     ['Средний плюс', sg(m.avg_win,2)+' депо'], ['Средний минус', sg(m.avg_loss,2)+' депо']];
-  if (S.source==='backtest' && te && (k==='all' || k==='trend')) cards.push(['Тренд: годовых', sg(te.cagr_pct,0)], ['Тренд: макс. просадка', sg(te.max_dd_pct,0)]);
+  if (S.source==='backtest' && te && (k==='all' || k==='trend')) cards.push(['Тренд: в среднем за год', sg(te.per_year_pct,0)+' депо'], ['Тренд: макс. просадка', sg(te.max_dd_pct,0)+' депо']);
   $('kpi').innerHTML = cards.map(([a,b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('');
   $('sub').textContent = S.source==='live' ? 'то, что бот опубликовал в канал' : `история ${F.period ? F.period.join(' … ') : ''}, в канал не публикуется`;
 }
@@ -540,6 +559,9 @@ def make_app(cfg, conn) -> web.Application:
                         "leverage": r["leverage"], **{k: r[k] for k in ("entry", "stop", "tp1", "tp2")},
                         "exits": [[e[0] // 1000 // 3600 * 3600, e[1]] for e in conn.execute(
                             "SELECT ts, event FROM outcomes WHERE signal_id=? AND closed_fraction>0 ORDER BY ts", (r["id"],))],
+                        "exits_full": [[e[0] // 1000, e[1], e[2], e[3]] for e in conn.execute(
+                            "SELECT ts, event, price, closed_fraction FROM outcomes WHERE signal_id=? AND closed_fraction>0 "
+                            "ORDER BY ts", (r["id"],))],
                         "exit_event": None})
         return out
 
@@ -643,22 +665,37 @@ def make_app(cfg, conn) -> web.Application:
     def live_feed() -> list[dict]:
         cfg_l = cfg["listings"]
         out = []
+        fee = cfg["trade"]["fee_taker_pct"]
+        from . import feed as fd
         for r in conn.execute("SELECT * FROM trend_signals ORDER BY open_day"):
-            out.append({"kind": "trend", "symbol": r["symbol"], "side": r["side"], "entry_time": r["open_day"] // 1000 + 86400,
-                        "exit_time": r["close_day"] // 1000 + 86400 if r["close_day"] else None, "entry": r["entry"],
-                        "exit": r["exit_price"], "size_pct": r["size_pct"], "exit_level": r["exit_level"],
-                        "move_pct": r["move_pct"], "result_pct": r["result_pct"], "open": r["status"] == "open",
-                        "exit_reason": "тренд сломался" if r["status"] != "open" else None})
+            st = json.loads(r["state"]) if r["state"] else {"side": r["side"], "entry": r["entry"], "rem": 1.0, "exits": []}
+            it = {"kind": "trend", "symbol": r["symbol"], "side": r["side"], "entry_time": r["open_day"] // 1000 + 86400,
+                  "exit_time": r["close_day"] // 1000 if r["close_day"] else None, "entry": r["entry"],
+                  "exit": r["exit_price"], "size_pct": r["size_pct"], "exit_level": r["exit_level"],
+                  "move_pct": r["move_pct"], "result_pct": r["result_pct"], "open": r["status"] == "open",
+                  "stop": r["stop"], "tp1": r["tp1"], "tp2": r["tp2"], "tp1_part": st.get("tp1_part"),
+                  "tp2_part": st.get("tp2_part"), "exits": st.get("exits", []), "rem": st.get("rem", 1.0)}
+            if it["open"]:                                  # итог сейчас: взятые части плюс остаток по последней цене
+                lastp = conn.execute("SELECT close FROM candles WHERE symbol=? AND market='futures' AND tf='1h' "
+                                     "ORDER BY ts DESC LIMIT 1", (r["symbol"],)).fetchone()
+                if lastp:
+                    it["move_pct"], it["result_pct"] = fd.realized(st, r["size_pct"], fee, mark=lastp[0])
+            out.append(it)
         for t in live_trades():
             out.append({"kind": "capitulation", "symbol": t["symbol"], "side": t["side"], "entry_time": t["entry_time"],
                         "exit_time": t["exit_time"], "entry": t["entry"], "stop": t["stop"], "tp1": t["tp1"], "tp2": t["tp2"],
                         "risk_pct": t["risk_pct"], "leverage": t["leverage"], "r": t["r"], "open": t["r"] is None,
+                        "tp1_part": 0.5, "tp2_part": 0.5,
+                        "exits": [{"what": fd.CAP_EVENTS.get(e[1], e[1]), "t": e[0], "price": e[2], "part": e[3]}
+                                  for e in t.get("exits_full", [])],
                         "result_pct": round(t["r"] * t["risk_pct"], 2) if t["r"] is not None and t["risk_pct"] else None})
         for r in conn.execute("SELECT * FROM listing_trades WHERE status IN ('open','closed')"):
             out.append({"kind": "listing", "symbol": r["symbol"], "side": "short", "entry_time": r["entry_ts"] // 1000,
                         "exit_time": r["exit_ts"] // 1000 if r["exit_ts"] else None, "entry": r["entry"], "stop": r["stop"],
                         "exit": r["exit_price"], "size_pct": r["notional_pct"], "result_pct": r["pnl_pct"],
-                        "open": r["status"] == "open", "exit_reason": {"stop": "стоп", "time": "по времени"}.get(r["exit_reason"])})
+                        "open": r["status"] == "open", "exit_reason": {"stop": "стоп", "time": "по времени"}.get(r["exit_reason"]),
+                        "exits": [{"what": "sl" if r["exit_reason"] == "stop" else r["exit_reason"], "t": r["exit_ts"] // 1000,
+                                   "price": r["exit_price"], "part": 1.0}] if r["status"] == "closed" else []})
         return sorted(out, key=lambda x: x["entry_time"])
 
     async def feed_api(request):

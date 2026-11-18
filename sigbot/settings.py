@@ -31,7 +31,7 @@ def effective(cfg: dict, conn) -> dict:
 
 
 OVERRIDABLE = [
-    "publishing.mode", "publishing.paused", "publishing.kill_switch",
+    "publishing.mode", "publishing.lang", "publishing.paused", "publishing.kill_switch",
     "risk.risk_min_pct", "risk.risk_max_pct", "risk.public_leverage_cap", "risk.personal_leverage_cap",
     "scanner.max_signals_per_day", "schedule.daily_note_hour_utc", "schedule.weekly_day",
     "portfolio.enabled", "listings.enabled", "scanner.enabled", "portfolio.signal_min_weight",

@@ -207,19 +207,90 @@ class LivePortfolio:
                           (day, eq, pnl * 100, sum(abs(w) for w in new.values())))
         return await self.signals(day, C, new, first=not prev)
 
+    def _lang(self) -> str:
+        from . import settings
+        return settings.effective(self.cfg, self.conn)["publishing"].get("lang", "en")
+
+    @staticmethod
+    def _st(r) -> dict:
+        import json
+        if r["state"]:
+            return json.loads(r["state"])
+        return {"side": r["side"], "entry": r["entry"], "rem": 1.0, "exits": []}   # старый сигнал без плана
+
+    def _save(self, rid: int, st: dict):
+        import json
+        self.conn.execute("UPDATE trend_signals SET state=? WHERE id=?", (json.dumps(st), rid))
+
+    async def _closed(self, r, st: dict, day_ms: int, mode: str, label: str = "") -> str | None:
+        """Сделка закрыта целиком: запись итога и один пост цепочкой вход → цели → выход."""
+        from . import feed, templates
+        mv, res = feed.realized(st, r["size_pct"], self.cfg["trade"]["fee_taker_pct"])
+        last = st["exits"][-1]["price"] if st["exits"] else r["entry"]
+        self.conn.execute("UPDATE trend_signals SET status='closed', close_day=?, exit_price=?, move_pct=?, result_pct=? "
+                          "WHERE id=?", (int(day_ms), last, mv, res, r["id"]))
+        self._save(r["id"], st)
+        text, nums = templates.trade_closed(r["symbol"], r["side"], r["entry"], st["exits"], res,
+                                            int((day_ms - r["open_day"]) / DAY), mode, self._lang(), label)
+        return await self.pub.publish("trend_exit", text, nums)
+
+    def _levels(self, sym: str, day: int, px: float, sd: int, C: pd.DataFrame | None = None) -> dict | None:
+        """Стоп и цели от дневного ATR на день входа."""
+        from . import feed
+        plan = feed.plan_cfg(self.cfg["portfolio"])
+        H, L, CL = feed.daily_ohlc(self.conn, day - 40 * DAY, day + DAY, [sym])
+        av = np.nan
+        if not CL.empty and sym in CL:
+            a = feed.atr(H, L, CL, plan["atr_days"])[sym]
+            av = float(a.get(day, a.dropna().iloc[-1] if a.notna().any() else np.nan))
+        if np.isnan(av) and C is not None and sym in C:              # нет часовых свечей: размах по закрытиям
+            av = float(C[sym].loc[:day].diff().abs().tail(plan["atr_days"]).mean()) * 1.3
+        return None if np.isnan(av) or av <= 0 else feed.levels(px, av, sd, plan)
+
+    async def manage(self, now_ms: int) -> None:
+        """Каждый час: дошла ли цена открытых сигналов тренда до TP1, TP2 или стопа (по закрытым часовым свечам)."""
+        from . import feed, templates
+        mode = self.cfg["publishing"]["mode"]
+        for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open'").fetchall():
+            st = self._st(r)
+            if st.get("stop") is None:                      # сигнал открыт до появления целей: ставим их с этого часа
+                lv = self._levels(r["symbol"], int(r["open_day"]), r["entry"], 1 if r["side"] == "long" else -1)
+                if lv is None:
+                    continue
+                st.update(lv, last_ts=now_ms // 3_600_000 * 3_600_000)
+                self.conn.execute("UPDATE trend_signals SET stop=?, tp1=?, tp2=? WHERE id=?", (lv["stop"], lv["tp1"], lv["tp2"], r["id"]))
+                self._save(r["id"], st)
+                continue
+            rows = self.conn.execute("SELECT ts, high, low FROM candles WHERE symbol=? AND market='futures' AND tf='1h' "
+                                     "AND ts>=? AND ts<=? ORDER BY ts", (r["symbol"], st.get("last_ts", r["open_day"] + DAY),
+                                                                         now_ms - 3_600_000)).fetchall()
+            for ts, hi, lo in rows:
+                st["last_ts"] = ts + 3_600_000
+                for ev in feed.step(st, ts // 1000 + 3600, hi, lo):
+                    if st["rem"] > 1e-9:
+                        text, nums = templates.trade_event(r["symbol"], r["side"], ev["what"], ev["price"], r["entry"],
+                                                           ev["part"], st["rem"], st["stop"], mode, self._lang())
+                        await self.pub.publish("trend_update", text, nums)
+                if st["rem"] <= 1e-9:
+                    await self._closed(r, st, ts + 3_600_000, mode)
+                    break
+            else:
+                self._save(r["id"], st)
+
     async def signals(self, day: int, C: pd.DataFrame, new: dict, first: bool = False) -> str | None:
-        """Сигналы ленты: позиция от signal_min_weight открывается постом с уровнем выхода, закрывается постом,
-        когда портфель убрал монету или развернул её. Раз в неделю список открытых с новыми уровнями."""
+        """Сигналы ленты: позиция от signal_min_weight открывается постом со стопом и двумя целями;
+        цели и стоп ведёт manage() по часовым свечам; остаток закрывается, когда портфель убрал монету
+        или развернул её. Раз в неделю список открытых."""
         from . import feed, templates
         day = int(day)
-        pc, mode = self.cfg["portfolio"], self.cfg["publishing"]["mode"]
-        thr, fee = pc.get("signal_min_weight", 0.1), self.cfg["trade"]["fee_taker_pct"]
+        pc, mode, lang = self.cfg["portfolio"], self.cfg["publishing"]["mode"], self._lang()
+        thr = pc.get("signal_min_weight", 0.1)
         last = C.loc[day]
         sent = None
-        st = None
+        stats = None
         if feed.FEED.exists():
             import json
-            st = json.loads(feed.FEED.read_text()).get("summary", {}).get("trend")
+            stats = json.loads(feed.FEED.read_text()).get("summary", {}).get("trend")
         for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open'").fetchall():
             w = new.get(r["symbol"], 0)
             px = float(last.get(r["symbol"], np.nan))
@@ -230,13 +301,9 @@ class LivePortfolio:
                 lv = feed.exit_level(C[r["symbol"]].loc[:day].values, sd, pc)
                 self.conn.execute("UPDATE trend_signals SET exit_level=? WHERE id=?", (lv, r["id"]))
                 continue
-            move = (px / r["entry"] - 1) * 100 * sd
-            res = r["size_pct"] * (move - 2 * fee) / 100
-            self.conn.execute("UPDATE trend_signals SET status='closed', close_day=?, exit_price=?, move_pct=?, result_pct=? "
-                              "WHERE id=?", (day, px, move, res, r["id"]))
-            text, nums = templates.trend_exit(r["symbol"], r["side"], r["entry"], px, move, res,
-                                              int((day - r["open_day"]) / DAY), mode)
-            sent = await self.pub.publish("trend_exit", text, nums) or sent
+            st = self._st(r)
+            feed.finish(st, (day + DAY) // 1000, px, "trend")
+            sent = await self._closed(r, st, day + DAY, mode) or sent
         open_syms = {r[0] for r in self.conn.execute("SELECT symbol FROM trend_signals WHERE status='open'")}
         for sym, w in sorted(new.items(), key=lambda x: -abs(x[1])):
             if abs(w) < thr or sym in open_syms:
@@ -246,16 +313,24 @@ class LivePortfolio:
             if prev_w and np.sign(prev_w[0]) == np.sign(w):        # позиция уже была до этого дня: не новый сигнал
                 continue
             sd = 1 if w > 0 else -1
+            side = "long" if sd > 0 else "short"
             px = float(last[sym])
             lv = feed.exit_level(C[sym].loc[:day].values, sd, pc)
-            self.conn.execute("INSERT INTO trend_signals (symbol, side, open_day, entry, size_pct, exit_level) VALUES (?,?,?,?,?,?)",
-                              (sym, "long" if sd > 0 else "short", day, px, round(abs(w) * 100, 1), lv))
+            levels = self._levels(sym, day, px, sd, C)
+            if levels is None:
+                continue
+            st = {**feed.new_state(side, px, levels), "last_ts": day + DAY}
+            import json
+            self.conn.execute("INSERT INTO trend_signals (symbol, side, open_day, entry, size_pct, exit_level, stop, tp1, tp2, state) "
+                              "VALUES (?,?,?,?,?,?,?,?,?,?)", (sym, side, day, px, round(abs(w) * 100, 1), lv,
+                                                              levels["stop"], levels["tp1"], levels["tp2"], json.dumps(st)))
             if not first:                       # первый запуск: не заваливаем канал, ниже одним списком
-                text, nums = templates.trend_signal(sym, "long" if sd > 0 else "short", px, abs(w) * 100, lv, mode, st)
+                text, nums = templates.trend_signal(sym, side, px, abs(w) * 100, lv, mode, stats, levels, lang)
                 sent = await self.pub.publish("trend_signal", text, nums) or sent
         if first or datetime.fromtimestamp(day / 1000, timezone.utc).weekday() == 6:
-            rows = [dict(r) for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open' ORDER BY size_pct DESC")]
-            text, nums = templates.trend_open_list(rows, mode)
+            rows = []
+            for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open' ORDER BY size_pct DESC"):
+                rows.append({**dict(r), "exits": self._st(r).get("exits", [])})
+            text, nums = templates.trend_open_list(rows, mode, lang)
             sent = await self.pub.publish("trend_list", text, nums) or sent
         return sent
-

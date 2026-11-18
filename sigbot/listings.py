@@ -24,6 +24,10 @@ class ListingShorts:
     def open_trades(self) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM listing_trades WHERE status='open'")]
 
+    def _lang(self) -> str:
+        from . import settings
+        return settings.effective(self.cfg, self.conn)["publishing"].get("lang", "en")
+
     async def run_daily(self, now: int) -> list[str]:
         lc = self.cfg["listings"]
         posts = []
@@ -60,7 +64,7 @@ class ListingShorts:
             due = entry_close + lc["hold_days"] * DAY
             self.conn.execute("INSERT INTO listing_trades VALUES (?,?,?,?,?,?,?, 'open', NULL, NULL, NULL, NULL)",
                               (sym, onboard, entry_close, entry, stop, due, lc["notional_pct"]))
-            text, nums = templates.listing_signal(sym, entry, stop, lc, self.cfg["publishing"]["mode"])
+            text, nums = templates.listing_signal(sym, entry, stop, lc, self.cfg["publishing"]["mode"], self._lang())
             posts.append(await self.pub.publish("listing", text, nums))
         # 2. ведение: стоп по максимуму суток, иначе выход по времени
         for t in self.open_trades():
@@ -83,6 +87,7 @@ class ListingShorts:
             self.conn.execute("UPDATE listing_trades SET status='closed', exit_ts=?, exit_price=?, exit_reason=?, "
                               "pnl_pct=? WHERE symbol=?", (exit_ts, exit_price, reason, pnl, t["symbol"]))
             text, nums = templates.listing_exit(t["symbol"], t["entry"], exit_price, reason, pnl,
-                                                self.cfg["publishing"]["mode"])
+                                                self.cfg["publishing"]["mode"], self._lang(),
+                                                int((exit_ts - t["entry_ts"]) / DAY))
             posts.append(await self.pub.publish("listing", text, nums))
         return posts

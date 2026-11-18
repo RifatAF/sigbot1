@@ -94,8 +94,7 @@ async def test_live_signal_to_close(cfg, conn, tg, monkeypatch):
     lv = live.Live(cfg, conn, Publisher(cfg, conn, tg, -100, 7), NoLLM(), bl)
     ids = await lv.scan(t)
     assert len(ids) == 1
-    assert "SOL LONG" in tg.sent[0][1] and tg.sent[0][2]          # пост с картинкой
-    assert "Watch zones" in tg.sent[0][1]
+    assert "SOL · ЛОНГ" in tg.sent[0][1] and "TP1" in tg.sent[0][1] and tg.sent[0][2]   # пост с картинкой
     assert await lv.scan(t) == []                                   # по открытому символу второго входа нет
 
     sig_ts = conn.execute("SELECT ts FROM signals").fetchone()[0]
@@ -114,7 +113,7 @@ async def test_live_signal_to_close(cfg, conn, tg, monkeypatch):
     tr = lv.closed_trades(0, sig_ts + 10 * HOUR)
     assert len(tr) == 1 and tr[0]["r"] == pytest.approx(1.85)
     await lv.weekly()  # время сейчас, сделка в прошлом: пост без сделок, но публикуется
-    assert "Weekly results" in tg.sent[-1][1]
+    assert "Часовые сделки за неделю" in tg.sent[-1][1]
 
     from aiohttp.test_utils import TestClient, TestServer
     async with TestClient(TestServer(make_app(cfg, conn))) as client:

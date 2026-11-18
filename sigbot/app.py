@@ -52,6 +52,11 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
                 log.exception("scan: %s", e)
             eff = settings.effective(cfg, conn)
             sc = eff["schedule"]
+            if port and eff.get("portfolio", {}).get("enabled"):
+                try:
+                    await port.manage(now)                  # цели и стопы открытых сигналов тренда по часовым свечам
+                except Exception as e:
+                    log.exception("trend targets: %s", e)
             if port and eff.get("portfolio", {}).get("enabled") and not eff["publishing"].get("kill_switch") \
                     and (time.gmtime(now / 1000).tm_hour - eff["portfolio"].get("post_hour_utc", 0)) % 24 < 3:
                 # три попытки: если часовая свеча 23:00 ещё не пришла, пересчёт через час (повтор за те же сутки не считается)

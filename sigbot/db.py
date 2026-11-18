@@ -129,4 +129,13 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    _add_columns(conn, "trend_signals", {"stop": "REAL", "tp1": "REAL", "tp2": "REAL", "state": "TEXT"})
     return conn
+
+
+def _add_columns(conn, table: str, cols: dict):
+    """Новые столбцы в старой базе: CREATE TABLE IF NOT EXISTS их не добавляет."""
+    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    for name, typ in cols.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")

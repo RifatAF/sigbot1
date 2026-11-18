@@ -94,8 +94,11 @@ class Admin:
     def mode_screen(self):
         m = self.eff()["publishing"]["mode"]
         lines = ["<b>Режим публикации</b>\n"] + [f"{'👉 ' if m == k else ''}<b>{v[0]}</b>: {v[1]}" for k, v in self.MODES.items()]
-        rows = [[(("• " if m == k else "") + v[0], f"setmode:{k}")] for k, v in self.MODES.items()] + [self.BACK]
-        return "\n".join(lines), kb(rows)
+        lang = self.eff()["publishing"].get("lang", "en")
+        lines.append(f"\nЯзык постов в канале: <b>{'русский' if lang == 'ru' else 'английский'}</b>")
+        rows = [[(("• " if m == k else "") + v[0], f"setmode:{k}")] for k, v in self.MODES.items()]
+        rows.append([("🌐 Посты на английском" if lang == "ru" else "🌐 Посты на русском", "lang")])
+        return "\n".join(lines), kb(rows + [self.BACK])
 
     def strat_screen(self):
         e = self.eff()
@@ -254,6 +257,9 @@ class Admin:
             return await self.show(chat, self.mode_screen(), mid)
         if data.startswith("setmode:"):
             settings.put(self.conn, "publishing.mode", data.split(":")[1])
+            return await self.show(chat, self.mode_screen(), mid)
+        if data == "lang":
+            settings.put(self.conn, "publishing.lang", "en" if e["publishing"].get("lang", "en") == "ru" else "ru")
             return await self.show(chat, self.mode_screen(), mid)
         if data == "pause":
             settings.put(self.conn, "publishing.paused", not e["publishing"].get("paused"))

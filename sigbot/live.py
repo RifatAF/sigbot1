@@ -118,7 +118,7 @@ class Live:
                  else ("negative" if feats["funding"] < 0 else "positive"),
                  "tp2_at_liquidation_cluster": feats.get("tp2_from_liq_cluster")}
         comment = await self.llm.comment(facts) if self.llm else ""
-        text, nums = templates.signal(d, comment, zones)
+        text, nums = templates.signal(d, comment, zones, lang=settings.effective(self.cfg, self.conn)["publishing"].get("lang", "en"))
         png = None
         try:
             html = chart.build_html(c.symbol, c.side, chart.candles_from_df(p, 96),
@@ -186,7 +186,10 @@ class Live:
                                       (o["id"],)).fetchone()[0]
         if ev.event == "trail":
             return   # трейлинг подтягивается каждые сутки: в журнал, без поста
-        text, nums = templates.update(o, ev.event, ev.price, total)
+        lang = settings.effective(self.cfg, self.conn)["publishing"].get("lang", "en")
+        risk = dict(o).get("risk_pct")
+        text, nums = templates.update(o, ev.event, ev.price, total, lang=lang,
+                                      pnl_pct=None if total is None or not risk else round(total * risk, 2))
         await self.pub.publish("update", text, nums, o["id"])
 
     # ---------- регулярные посты ----------
@@ -223,7 +226,7 @@ class Live:
                   "neutral" if m["fear_greed"] < 56 else "greed" if m["fear_greed"] < 76 else "extreme greed"),
                  "new_signals_today": m["signals_today"] > 0}
         comment = await self.llm.comment(facts) if self.llm else ""
-        text, nums = templates.daily_note(m, comment)
+        text, nums = templates.daily_note(m, comment, settings.effective(self.cfg, self.conn)["publishing"].get("lang", "en"))
         return await self.pub.publish("daily", text, nums)
 
     def closed_trades(self, start: int, end: int) -> list[dict]:
@@ -247,5 +250,5 @@ class Live:
         trades = self.closed_trades(t - 7 * DAY, t)
         totals = {"trades": len(trades), "wins": sum(1 for x in trades if x["r"] > 0),
                   "sum_r": sum(x["r"] for x in trades), "pnl_pct": sum(x["pnl_pct"] for x in trades)}
-        text, nums = templates.weekly(trades, totals)
+        text, nums = templates.weekly(trades, totals, settings.effective(self.cfg, self.conn)["publishing"].get("lang", "en"))
         return await self.pub.publish("weekly", text, nums)

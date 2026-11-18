@@ -30,13 +30,13 @@ async def test_listing_short_entry_and_stop(cfg, conn, tg):
     ls = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), bn)
     assert await ls.run_daily((d0 + 2) * DAY + 60_000) == ["sent"]          # вход на закрытии первых полных суток
     t = ls.open_trades()[0]
-    assert t["entry"] == 1.0 and t["stop"] == pytest.approx(1.5) and "NEW SHORT" in tg.sent[-1][1]
+    assert t["entry"] == 1.0 and t["stop"] == pytest.approx(1.5) and "NEW · ШОРТ" in tg.sent[-1][1]
     bars.append(bar(d0 + 2, 1.0, 1.2, 0.9, 1.1))
     bars.append(bar(d0 + 3, 1.1, 1.6, 1.0, 1.5))                               # вынос выше стопа
     assert await ls.run_daily((d0 + 4) * DAY + 60_000) == ["sent"]
     r = conn.execute("SELECT status, exit_reason, pnl_pct FROM listing_trades").fetchone()
     assert r[0] == "closed" and r[1] == "stop" and r[2] == pytest.approx((-50 - 0.1) * cfg["listings"]["notional_pct"] / 100)
-    assert "Stopped out" in tg.sent[-1][1]
+    assert "стоп ❌" in tg.sent[-1][1]
 
 
 @pytest.mark.asyncio
