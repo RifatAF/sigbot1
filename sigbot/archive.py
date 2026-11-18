@@ -16,6 +16,7 @@ from .http import Http
 
 log = logging.getLogger(__name__)
 BASE = "https://data.binance.vision/data"
+MIRROR = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision/data"   # тот же архив напрямую с S3
 
 
 def _months(start: date, end: date):
@@ -65,10 +66,20 @@ class Archive:
         self.http, self.conn = http, conn
         self.sem = asyncio.Semaphore(concurrency)
 
+    failed = 0
+
     async def _get(self, url: str):
-        async with self.sem:
-            blob = await self.http.get_bytes(url)
-        return _rows(blob) if blob else None
+        """Файл архива; сбой сети не роняет загрузку: пробуем зеркало, иначе пропуск (дыры потом закроет history.py)."""
+        for u in (url, url.replace(BASE, MIRROR)):
+            try:
+                async with self.sem:
+                    blob = await self.http.get_bytes(u)
+                return _rows(blob) if blob else None
+            except Exception as e:
+                last = e
+        Archive.failed += 1
+        log.warning("archive: %s", str(last)[:150])
+        return None
 
     async def klines(self, symbol: str, market: str, tf: str, start: date, end: date):
         seg = "futures/um" if market == "futures" else "spot"
