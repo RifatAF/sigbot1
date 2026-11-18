@@ -65,6 +65,7 @@ class Admin:
             [("🪙 Монеты", "coins"), ("🕒 Расписание", "sched")],
             [("🧾 Итоги недели", "pm"), ("📤 Сделки в Excel", "export")],
             [("🗣 Блогеры", "blog"), ("📌 Пост о методе", "method")],
+            [("📱 Панель на телефоне", "phone")],
             [("💻 Компьютеры", "pcs"), ("❓ Помощь", "help")],
             [("✅ Снять аварийную остановку" if p.get("kill_switch") else "⛔ Аварийная остановка", "kill")],
         ]
@@ -88,8 +89,33 @@ class Admin:
                 "📌 <b>Пост о методе</b>: закреплённый пост в канале с объяснением стратегии.\n"
                 "💻 <b>Компьютеры</b>: какой компьютер сейчас главный и как переключить.\n"
                 "⛔ <b>Аварийная остановка</b>: бот перестаёт искать сигналы и писать в канал, пока не снимешь.\n\n"
-                f"Панель с графиками: http://127.0.0.1:{self.cfg['dashboard']['port']} на компьютере с ботом.")
+                f"Панель с графиками: http://127.0.0.1:{self.cfg['dashboard']['port']} на компьютере с ботом. "
+                "📱 <b>Панель на телефоне</b>: присылает ссылку с ключом, работает и с мобильного интернета.")
         return text, kb([self.BACK])
+
+    async def phone_screen(self):
+        from . import phone
+        from .http import Http
+        port, tok = self.cfg["dashboard"]["port"], phone.token(self.conn)
+        lines = ["📱 <b>Панель на телефоне</b>\n"]
+        http, url, err = Http(), None, ""
+        try:
+            url = await phone.start(http, port)
+        except Exception as e:
+            err = ": " + str(e)[:120]
+        finally:
+            await http.close()
+        if url:
+            lines.append(f"Откуда угодно (мобильный интернет тоже):\n{url}/?token={tok}\n")
+        else:
+            lines.append(f"Туннель не запустился{err}. Проверь интернет или VPN и нажми ещё раз.\n")
+        ip = phone.lan_ip()
+        if ip and self.cfg["dashboard"].get("host") in ("0.0.0.0", ip):
+            lines.append(f"Дома в той же Wi-Fi сети:\nhttp://{ip}:{port}/?token={tok}\n")
+        lines.append("Ссылка с секретным ключом: не пересылай её. Открой один раз, дальше телефон помнит ключ. "
+                     "Адрес меняется при перезапуске бота, тогда нажми кнопку снова. Добавь страницу на главный экран: "
+                     "в браузере «Поделиться» → «На экран Домой».")
+        return "\n".join(lines), kb([[("🔄 Обновить ссылку", "phone")], self.BACK])
 
     def mode_screen(self):
         m = self.eff()["publishing"]["mode"]
@@ -254,6 +280,9 @@ class Admin:
             return
         if data == "help":
             return await self.show(chat, self.help_screen(), mid)
+        if data == "phone":
+            await self.show(chat, ("📱 Запускаю доступ к панели, до 40 секунд…", kb([self.BACK])), mid)
+            return await self.show(chat, await self.phone_screen(), mid)
         if data == "pcs":
             return await self.show(chat, self.pcs_screen(), mid)
         if data == "strat":

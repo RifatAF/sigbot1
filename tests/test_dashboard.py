@@ -23,3 +23,21 @@ def test_endpoints_answer():
             d = await (await c.get("/api/candles?symbol=BTCUSDT&tf=1d")).json()
             assert d and all(x["low"] <= x["open"] <= x["high"] for x in d)
     asyncio.run(run())
+
+
+def test_remote_needs_token_then_cookie():
+    from sigbot import phone
+    cfg = config.load()
+    conn = db.connect(":memory:")
+    tok = phone.token(conn)
+    assert tok == phone.token(conn)                                     # ключ один и тот же
+
+    async def run():
+        async with TestClient(TestServer(dashboard.make_app(cfg, conn))) as c:
+            far = {"X-Forwarded-For": "8.8.8.8"}                       # запрос через туннель
+            assert (await c.get("/api/status")).status == 200          # с этого компьютера без ключа
+            assert (await c.get("/api/status", headers=far)).status == 401
+            r = await c.get(f"/?token={tok}", headers=far)
+            assert r.status == 200 and "sigbot" in r.cookies
+            assert (await c.get("/api/status", headers=far)).status == 200   # дальше по cookie
+    asyncio.run(run())

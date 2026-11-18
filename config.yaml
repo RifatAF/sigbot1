@@ -155,7 +155,7 @@ schedule:
   weekly_hour_utc: 15
 
 dashboard:
-  host: 127.0.0.1
+  host: 0.0.0.0                # видно с телефона в домашней Wi-Fi (с ключом); 127.0.0.1: только с этого компьютера
   port: 8787
 
 bloggers:

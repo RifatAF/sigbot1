@@ -41,7 +41,7 @@ class Telegram:
 
     async def edit_text(self, chat_id, message_id, text, reply_markup=None):
         return await self.call("editMessageText", chat_id=chat_id, message_id=message_id, text=text,
-                               parse_mode="HTML", reply_markup=reply_markup)
+                               parse_mode="HTML", reply_markup=reply_markup, disable_web_page_preview="true")
 
     async def answer_callback(self, cq_id, text=None):
         return await self.call("answerCallbackQuery", callback_query_id=cq_id, text=text)

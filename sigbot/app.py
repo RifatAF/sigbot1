@@ -110,6 +110,8 @@ async def auto_update(pub):
                 msg = "🔄 Ставлю обновление, бот перезапустится за 10–30 секунд:\n" + "\n".join("• " + updater.short(x) for x in new[:3])
                 print("\n" + msg, flush=True)
                 await pub.notify_owner(msg)
+                from . import phone
+                phone.stop()                                # туннель для телефона не остаётся висеть
                 os._exit(updater.UPDATE_EXIT)
         except Exception as e:
             log.warning("auto update check: %s", e)
@@ -166,7 +168,7 @@ async def run(cfg, conn):
             "(run_sigbot.bat, автозапуск или второй VS Code). Закрой его и запусти снова.")
         await http.close()
         raise SystemExit(1)
-    say(f"✅ Панель: http://{cfg['dashboard']['host']}:{cfg['dashboard']['port']}  (обзор: /overview)")
+    say(f"✅ Панель: http://127.0.0.1:{cfg['dashboard']['port']}  (на телефоне: в Telegram /menu → 📱 Панель на телефоне)")
     say(f"✅ Telegram: {'основной экземпляр' if leader and leader.is_main else 'запасной, в канал не пишет' if leader else 'нет токена, посты не уходят'}")
     tasks = [asyncio.create_task(_guard(fn.__name__, fn)) for fn in col.tasks()]
     tasks.append(asyncio.create_task(_guard("auto_update", lambda: auto_update(pub))))
@@ -189,5 +191,7 @@ async def run(cfg, conn):
     try:
         await asyncio.gather(*tasks)
     finally:
+        from . import phone
+        phone.stop()
         await runner.cleanup()
         await http.close()

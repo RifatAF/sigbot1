@@ -526,13 +526,21 @@ def latest_backtest() -> dict | None:
 
 
 def make_app(cfg, conn) -> web.Application:
-    token = os.environ.get("DASHBOARD_TOKEN")
+    from . import phone
+    token = phone.token(conn)
 
     @web.middleware
     async def auth(request, handler):
-        if token and request.path != "/static/lightweight-charts.js" and request.query.get("token") != token:
-            raise web.HTTPUnauthorized(text="token required")
-        return await handler(request)
+        """С этого компьютера без ключа. С телефона и через туннель нужен ключ: из ссылки, дальше из cookie."""
+        local = request.remote in ("127.0.0.1", "::1") and "cf-connecting-ip" not in request.headers \
+            and "x-forwarded-for" not in request.headers
+        got = request.query.get("token") or request.cookies.get("sigbot")
+        if not local and request.path != "/static/lightweight-charts.js" and got != token:
+            raise web.HTTPUnauthorized(text="Нужна ссылка с ключом: в Telegram /menu → 📱 Панель на телефоне")
+        resp = await handler(request)
+        if request.query.get("token") == token and hasattr(resp, "set_cookie"):
+            resp.set_cookie("sigbot", token, max_age=90 * 86400, httponly=True, samesite="Lax")
+        return resp
 
     async def index(_):
         return web.Response(text=PAGE, content_type="text/html")
