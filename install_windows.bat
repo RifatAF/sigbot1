@@ -18,6 +18,7 @@ if not exist .env (
   echo Ключи пишутся только в файл .env на этом компьютере.
   set /p TG=Токен Telegram бота: 
   set /p GM=Ключ Gemini: 
+  set /p NM=Имя этого компьютера латиницей (например pc или laptop): 
   call :writeenv
 )
 
@@ -39,5 +40,6 @@ exit /b 0
   echo TELEGRAM_CHANNEL_ID=-1003595508596
   echo TELEGRAM_OWNER_ID=569798955
   echo GEMINI_API_KEY=%GM%
+  echo SIGBOT_NAME=%NM%
 ) > .env
 exit /b 0
