@@ -12,12 +12,21 @@ from datetime import date, timedelta
 from pathlib import Path
 
 log = logging.getLogger(__name__)
-STATUS = {"state": "idle", "text": ""}
+STATUS = {"state": "idle", "text": "", "pct": 0, "warn": []}
 
 
-def _set(state, text):
+def _set(state, text, pct=None):
+    """state work/ok/fail; pct общий прогресс 0..100; предупреждения копятся отдельно и не затираются этапами."""
+    if state == "warn":
+        STATUS["warn"].append(text)
+        print("⚠️ " + text, flush=True)
+        return
+    if pct is not None:
+        STATUS["pct"] = int(pct)
     STATUS.update(state=state, text=text, ts=int(time.time()))
-    print(("⏳ " if state == "work" else "✅ " if state == "ok" else "⚠️ ") + text, flush=True)
+    p = STATUS["pct"]
+    bar = "█" * (p // 5) + "░" * (20 - p // 5)
+    print(("⏳ " if state == "work" else "✅ " if state == "ok" else "❌ ") + f"[{bar}] {p}%  {text}", flush=True)
 
 
 def history_days(conn) -> int:
@@ -46,6 +55,8 @@ def _overview_sync(cfg):
 
 
 async def run(cfg, conn, http):
+    STATUS.update(warn=[], pct=0)
+    _set("work", "Проверяю полноту истории по монетам", 1)
     try:
         from .__main__ import FALLBACK_UNIVERSE, _universe
         from .archive import Archive
@@ -66,33 +77,31 @@ async def run(cfg, conn, http):
         for i, s in enumerate(todo, 1):
             name = s.replace("USDT", "")
             if not conn.execute("SELECT 1 FROM open_interest WHERE symbol=? AND ts<? LIMIT 1", (s, now - 60 * 86_400_000)).fetchone():
-                _set("work", f"История {name} ({i}/{len(todo)}): архив Binance (OI, фандинг, свечи)")
+                _set("work", f"История {name} ({i}/{len(todo)}): архив Binance (OI, фандинг, свечи)", 3 + 67 * (i - 1) / len(todo))
                 await Archive(http, conn).symbol_all(s, t0, date.today() - timedelta(days=1))
-            _set("work", f"История {name} ({i}/{len(todo)}): докачиваю пропуски через API")
+            _set("work", f"История {name} ({i}/{len(todo)}): докачиваю пропуски через API", 3 + 67 * (i - .4) / len(todo))
             await fill(conn, bn, s, start, now)
         bad = [s.replace("USDT", "") for s in syms if not ok(s)]
         if bad:
-            _set("fail", f"Неполная история: {', '.join(bad[:10])}. Проверь интернет и перезапусти бота")
+            _set("warn", f"Неполная история: {', '.join(bad[:10])}. Проверь интернет и перезапусти бота")
         no_oi = [s.replace("USDT", "") for s in syms if not conn.execute(
             "SELECT 1 FROM open_interest WHERE symbol=? AND ts<? LIMIT 1", (s, now - 60 * 86_400_000)).fetchone()]
         if len(no_oi) > len(syms) // 3:
-            _set("fail", f"Архив data.binance.vision не открывается: нет истории OI по {len(no_oi)} монетам, "
+            _set("warn", f"Архив data.binance.vision не открывается: нет истории OI по {len(no_oi)} монетам, "
                          "сигналов в бэктесте будет меньше. Включи VPN и перезапусти бота")
         if changed or need_backtest(cfg):
-            _set("work", "Считаю бэктест часовых сигналов (около минуты)")
+            _set("work", "Считаю бэктест часовых сигналов (около минуты)", 72)
             path, n = await asyncio.to_thread(_backtest_sync, cfg)
             log.info("backtest saved %s", path)
         ov = Path("reports/overview.json")
         if changed or not ov.exists() or time.time() - ov.stat().st_mtime > 7 * 86400:
-            _set("work", "Считаю сводный бэктест портфеля и листингов для /overview (до 10 минут)")
+            _set("work", "Считаю сводный бэктест портфеля и листингов для /overview (до 10 минут)", 85)
             try:
                 await asyncio.to_thread(_overview_sync, cfg)
             except Exception as e:
                 log.exception("overview")
-                _set("fail", f"Сводный отчёт /overview не посчитан ({str(e)[:80]}), бэктест сигналов на главной есть")
-                return
-        if not bad:
-            _set("ok", "История полная, бэктест готов: на панели кнопка «Бэктест»")
+                _set("warn", f"Сводный отчёт /overview не посчитан ({str(e)[:80]}), бэктест сигналов на главной есть")
+        _set("ok", "Готово: история загружена, бэктест посчитан" + (" (есть предупреждения)" if STATUS["warn"] else ""), 100)
     except Exception as e:
         log.exception("autoprep")
         _set("fail", f"Бэктест не посчитан: {str(e)[:120]}")

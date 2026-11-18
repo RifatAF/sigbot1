@@ -21,7 +21,10 @@ header{display:flex;gap:10px;align-items:center;padding:12px 16px;flex-wrap:wrap
 select,button{background:#151a24;color:#e8ebf1;border:1px solid #2b3345;border-radius:8px;padding:7px 12px;font-size:14px;cursor:pointer}
 button.on{background:#5b8cff;border-color:#5b8cff}button:disabled{opacity:.35;cursor:default}.sep{width:1px;height:24px;background:#2b3345}
 a{color:#7aa7ff}.muted{color:#8a93a6}
-#status{margin:0 16px 8px;padding:9px 14px;border-radius:8px;background:#1d2533;color:#ffd27a;display:none}
+#status{margin:0 16px 10px;padding:10px 14px;border-radius:8px;background:#151a24;display:none}
+.bar{height:8px;border-radius:4px;background:#232b3a;overflow:hidden;margin:8px 0 2px}.bar i{display:block;height:100%;background:#5b8cff;transition:width .6s}
+.st-ok .bar i{background:#3ddc97}.st-fail .bar i{background:#ff6b6b}.warn{color:#ffd27a;font-size:13px;margin-top:6px}
+.why{margin:4px 16px 0;padding:10px 14px;border-radius:8px;background:#151a24;color:#a9b1c2;font-size:13px;line-height:1.5;display:none}
 .wrap{position:relative;height:62vh;margin:0 16px;border:1px solid #1b2130;border-radius:10px;overflow:hidden}
 #c{position:absolute;inset:0}#ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
 #empty{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;text-align:center;color:#8a93a6;font-size:15px;padding:20px}
@@ -51,13 +54,13 @@ td,th{padding:7px;border-bottom:1px solid #1b2130;text-align:left}tbody tr{curso
 <span><i style="background:rgba(61,220,151,.55)"></i><i style="background:rgba(255,107,107,.55)"></i>полоса внизу: трендовый портфель в лонге / шорте</span></div>
 <div class="nav"><button id="prev">◀</button><span id="cnt" class="muted"></span><button id="next">▶</button>
 <span class="title" id="ttl"></span><span id="bdg"></span><span class="muted" id="when"></span></div>
-<div class="cards" id="det"></div>
+<div class="why" id="why"></div><div class="cards" id="det"></div>
 <div class="cards" id="stats"></div>
 <h3 id="th">Сигналы</h3>
 <table id="tbl"><thead><tr><th>Монета</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>Как закрылась</th><th>Результат</th></tr></thead><tbody></tbody></table>
 <script>
 const q = new URLSearchParams(location.search), tok = q.get('token') ? 'token='+q.get('token') : '';
-let source = 'live', tf = '1h', cs = [], times = [], trades = [], all = [], cur = -1, center = 0;
+let BT = {}, source = 'live', tf = '1h', cs = [], times = [], trades = [], all = [], cur = -1, center = 0;
 const $ = id => document.getElementById(id);
 const chart = LightweightCharts.createChart($('c'), {autoSize:true,
   layout:{background:{color:'#0d1017'}, textColor:'#9aa3b5', fontSize:13},
@@ -143,7 +146,17 @@ function renderDet(){
   const t = trades[cur];
   $('cnt').textContent = trades.length ? `сигнал ${cur+1} из ${trades.length}` : 'по этой монете сигналов нет';
   $('prev').disabled = cur <= 0; $('next').disabled = cur >= trades.length-1;
-  if (!t) { $('ttl').textContent=''; $('bdg').innerHTML=''; $('when').textContent=''; $('det').innerHTML=''; return; }
+  $('why').style.display = t ? 'none' : 'block';
+  if (!t) { $('ttl').textContent=''; $('bdg').innerHTML=''; $('when').textContent=''; $('det').innerHTML='';
+    const name = $('sym').value.replace('USDT',''), total = all.length;
+    $('why').innerHTML = source==='live' ? `По ${name} бот ещё не публиковал сигналов. Бэктест истории: кнопка «Бэктест».` :
+      ST.state==='work' ? `⏳ Бэктест пересчитывается на полной истории (${ST.pct}%). Сигналы появятся, когда полоса дойдёт до 100%.` :
+      !total ? 'Бэктест ещё не посчитан или в истории нет данных открытого интереса (смотри предупреждение выше).' :
+      `За период бэктеста${BT.period ? ' ' + BT.period : ''} по ${name} сигналов не было. Часовая стратегия входит только после сильного слива `+
+      `с падением открытого интереса (капитуляция), это редкое событие: всего ${total} сигналов по всем монетам. `+
+      `Монеты с сигналами стоят вверху списка, рядом число сигналов. Основная прибыль идёт от трендового портфеля: `+
+      `полоса внизу графика и страница «обзор и бэктест портфеля».`;
+    return; }
   $('ttl').textContent = t.symbol.replace('USDT','');
   $('bdg').innerHTML = `<span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>`;
   $('when').textContent = 'вход ' + fmt(t.entry_time) + ' UTC' + (t.exit_time ? ', выход ' + fmt(t.exit_time) : ', сделка открыта');
@@ -174,17 +187,23 @@ async function load(){
   await loadCandles(sym);
   if (trades.length) await go(trades.length-1);
   else { cur=-1; if (tf==='1h') chart.timeScale().setVisibleLogicalRange({from: cs.length-240, to: cs.length+12}); else chart.timeScale().fitContent(); renderDet(); renderTable(); redraw(); }
-  const st = await j('api/stats?source='+source);
+  const st = await j('api/stats?source='+source); if (source==='backtest') BT = {period: st['период'] || ''}; renderDet();
   const names = {signals:'сигналов', open:'открыто', closed:'закрыто', 'win %':'прибыльных, %', 'sum R':'сумма R', mode:'режим',
     version:'версия', trades:'сделок (все монеты)', 'return %':'доходность, %', 'buy&hold %':'buy and hold, %', 'max DD %':'просадка, %',
     'profit factor':'profit factor', 'beats B&H and cash':'лучше рынка и кэша', backtest:'бэктест'};
-  $('stats').innerHTML = Object.entries(st).map(([k,v]) =>
+  $('stats').innerHTML = Object.entries(st).filter(([k]) => k!=='период').map(([k,v]) =>
     `<div class="card"><span>${names[k]||k}</span><b>${v==='yes'?'да':v==='no'?'нет':v}</b></div>`).join('');
   $('note').textContent = source==='live' ? 'Живая работа: то, что ушло в канал' : 'Бэктест часовых сигналов, в канал не публикуется';
 }
-async function poll(){ try { const st = await j('api/status'); const b = $('status');
-  b.style.display = st.state==='work' || st.state==='fail' ? 'block' : 'none'; b.textContent = (st.state==='work'?'⏳ ':'⚠️ ') + st.text;
-  if (st.state==='ok' && poll.was==='work') { await fillSymbols(); load(); } poll.was = st.state; } catch(e){} setTimeout(poll, 5000); }
+let ST = {};
+async function poll(){ try { const st = await j('api/status'); ST = st; const b = $('status');
+  const show = st.state==='work' || st.state==='fail' || (st.warn||[]).length || (st.state==='ok' && Date.now()/1000 - st.ts < 60);
+  b.style.display = show ? 'block' : 'none'; b.className = 'st-'+st.state;
+  const icon = st.state==='work' ? '⏳' : st.state==='ok' ? '✅' : '❌';
+  b.innerHTML = `<b>${icon} ${st.state==='work' ? 'Подготовка данных: ' + st.pct + '%' : st.state==='ok' ? 'Подготовка завершена' : 'Ошибка подготовки'}</b>
+    <span class="muted">&nbsp; ${st.text||''}</span><div class="bar"><i style="width:${st.state==='ok'?100:st.pct||0}%"></i></div>` +
+    (st.warn||[]).map(w => `<div class="warn">⚠️ ${w}</div>`).join('');
+  if (st.state==='ok' && poll.was==='work') { await fillSymbols(); load(); } poll.was = st.state; } catch(e){} setTimeout(poll, 3000); }
 const toggle = (a, b, on) => { $(a).classList.toggle('on', on); $(b).classList.toggle('on', !on); };
 $('t1h').onclick = () => { tf='1h'; toggle('t1h','t1d',true); chart.applyOptions({timeScale:{timeVisible:true}}); load(); };
 $('t1d').onclick = () => { tf='1d'; toggle('t1h','t1d',false); chart.applyOptions({timeScale:{timeVisible:false}}); load(); };
@@ -287,7 +306,12 @@ def make_app(cfg, conn) -> web.Application:
                 from . import autoprep
                 return web.json_response({"backtest": autoprep.STATUS.get("text") or "ещё не посчитан"})
             t, b = rep["total"], rep["benchmarks"]
-            return web.json_response({"version": rep["params_version"], "trades": t["trades"],
+            import time as _t
+            pr = rep.get("period", {})
+            return web.json_response({"version": rep["params_version"],
+                                      "период": (_t.strftime("%Y-%m-%d", _t.gmtime(pr["out_of_sample_start"] / 1000)) if isinstance(pr.get("out_of_sample_start"), int) else pr.get("start", "")) + " … " + pr.get("end", ""),
+                                      "посчитан": _t.strftime("%d.%m %H:%M", _t.localtime(rep["generated"] / 1000)),
+                                      "trades": t["trades"],
                                       "return %": t["return_pct"], "buy&hold %": b["equal_weight_pct"],
                                       "max DD %": t["max_drawdown_pct"], "win %": t["win_rate_pct"],
                                       "profit factor": t["profit_factor"],
