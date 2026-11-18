@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
+set SIGBOT_SUPERVISED=1
 :loop
 git pull --ff-only >nul 2>nul
 call .venv\Scripts\activate.bat

@@ -93,9 +93,15 @@ async def auto_update(pub):
                 continue
             ahead = run("rev-list", "--count", "HEAD..@{u}").stdout.strip()
             if ahead and ahead != "0":
-                log.warning("auto update: %s new commits, restarting", ahead)
-                await pub.notify_owner(f"🔄 Обновление: {ahead} новых изменений, перезапуск за минуту.")
-                os._exit(0)
+                if os.environ.get("SIGBOT_SUPERVISED"):   # run_sigbot.bat сам подтянет код и перезапустит
+                    log.warning("auto update: %s new commits, restarting", ahead)
+                    await pub.notify_owner(f"🔄 Обновление: {ahead} новых изменений, перезапуск за минуту.")
+                    os._exit(0)
+                # запуск из VS Code: перезапустить некому, поэтому только скачиваем и просим перезапустить
+                if run("pull", "--ff-only").returncode == 0:
+                    msg = "🔄 Скачано обновление бота. Перезапусти его: Shift+F5, затем F5."
+                    print("\n" + msg + "\n", flush=True)
+                    await pub.notify_owner(msg)
         except Exception as e:
             log.warning("auto update check: %s", e)
 

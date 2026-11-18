@@ -41,59 +41,71 @@ td,th{padding:7px;border-bottom:1px solid #1b2130;text-align:left}tbody tr{curso
 .pos{color:#3ddc97}.neg{color:#ff6b6b}
 .legend{display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px 0;font-size:12px;color:#8a93a6}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+.seg{display:inline-flex;background:#151a24;border:1px solid #2b3345;border-radius:9px;padding:2px}
+.seg button{border:0;background:none;padding:6px 12px;border-radius:7px}.seg button.on{background:#5b8cff}
+.hint{padding:6px 16px 0;font-size:13px;color:#8a93a6}
+.sum{display:flex;gap:18px;flex-wrap:wrap;padding:10px 16px 0;font-size:14px}.sum b{font-size:16px}
 </style></head><body>
-<header><b>sigbot</b><a href="overview" id="ovl">обзор и бэктест портфеля →</a><span class="sep"></span>
-<select id="sym"></select><span class="sep"></span>
-<button id="bLive" class="on">Живые</button><button id="bBt">Бэктест</button><span class="sep"></span>
-<button id="t1h" class="on">Час</button><button id="t1d">День</button>
-<span class="muted" id="note"></span></header>
+<header><b>sigbot</b>
+<select id="sym" title="Монета"></select>
+<span class="seg"><button data-g="source" data-v="live" class="on">Живые</button><button data-g="source" data-v="backtest">Бэктест</button></span>
+<span class="seg"><button data-g="view" data-v="signals" class="on">Часовые сигналы</button><button data-g="view" data-v="portfolio">Трендовый портфель</button></span>
+<span class="seg"><button data-g="tf" data-v="1h" class="on">Час</button><button data-g="tf" data-v="1d">День</button></span>
+<a href="overview" id="ovl">сводный отчёт →</a></header>
 <div id="status"></div>
+<div class="sum" id="sum"></div>
+<div class="hint" id="hint"></div>
 <div class="wrap"><div id="c"></div><canvas id="ov"></canvas><div id="empty"></div></div>
-<div class="legend"><span><i style="background:rgba(61,220,151,.5)"></i>зона цели</span><span><i style="background:rgba(255,107,107,.5)"></i>зона риска</span>
-<span><i style="background:#5b8cff"></i>вход</span><span><i style="background:#3ddc97;border-radius:50%"></i><i style="background:#ff6b6b;border-radius:50%"></i>выход в плюс / минус</span>
-<span><i style="background:rgba(61,220,151,.55)"></i><i style="background:rgba(255,107,107,.55)"></i>полоса внизу: трендовый портфель в лонге / шорте</span></div>
-<div class="nav"><button id="prev">◀</button><span id="cnt" class="muted"></span><button id="next">▶</button>
+<div class="legend" id="legend"></div>
+<div class="nav"><button id="prev" title="Предыдущая (←)">◀</button><span id="cnt" class="muted"></span><button id="next" title="Следующая (→)">▶</button>
 <span class="title" id="ttl"></span><span id="bdg"></span><span class="muted" id="when"></span></div>
 <div class="why" id="why"></div><div class="cards" id="det"></div>
-<div class="cards" id="stats"></div>
-<h3 id="th">Сигналы</h3>
-<table id="tbl"><thead><tr><th>Монета</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>Как закрылась</th><th>Результат</th></tr></thead><tbody></tbody></table>
+<h3 id="th"></h3>
+<table id="tbl"><thead id="thead"></thead><tbody></tbody></table>
+<h3>Бэктест часовых сигналов, все монеты</h3><div class="cards" id="stats"></div>
 <script>
 const q = new URLSearchParams(location.search), tok = q.get('token') ? 'token='+q.get('token') : '';
-let BT = {}, source = 'live', tf = '1h', cs = [], times = [], trades = [], all = [], cur = -1, center = 0;
+const S = {source: q.get('source') || 'live', view: q.get('view') || 'signals', tf: '1h'};
+let cs = [], times = [], items = [], all = [], cur = -1, center = 0, ST = {}, BT = {}, daily = [];
 const $ = id => document.getElementById(id);
+const G = '#3ddc97', R = '#ff6b6b', B = '#5b8cff';
 const chart = LightweightCharts.createChart($('c'), {autoSize:true,
   layout:{background:{color:'#0d1017'}, textColor:'#9aa3b5', fontSize:13},
   grid:{vertLines:{visible:false}, horzLines:{color:'#161b26'}},
-  rightPriceScale:{borderVisible:false, scaleMargins:{top:0.08, bottom:0.16}}, timeScale:{borderVisible:false, timeVisible:true, rightOffset:12},
-  localization:{priceFormatter: p => p < 0 ? '' : px(p)}});
-const s = chart.addCandlestickSeries({upColor:'#3ddc97', downColor:'#ff6b6b', borderVisible:false, wickUpColor:'#3ddc97', wickDownColor:'#ff6b6b'});
-s.applyOptions({autoscaleInfoProvider: orig => { const r = orig(), t = trades[cur]; if (!r || !t || t.entry==null) return r;
+  rightPriceScale:{borderVisible:false, scaleMargins:{top:0.1, bottom:0.08}}, timeScale:{borderVisible:false, timeVisible:true, rightOffset:8},
+  crosshair:{mode:0}, localization:{priceFormatter: p => p <= 0 ? '' : px(p)}});
+const s = chart.addCandlestickSeries({upColor:G, downColor:R, borderVisible:false, wickUpColor:G, wickDownColor:R});
+s.applyOptions({autoscaleInfoProvider: orig => { const r = orig(), t = items[cur]; if (!r || !t || S.view!=='signals' || t.stop==null) return r;
   return {priceRange:{minValue: Math.min(r.priceRange.minValue, t.stop, t.tp2), maxValue: Math.max(r.priceRange.maxValue, t.stop, t.tp2)}}; }});
-const band = chart.addHistogramSeries({priceScaleId:'pos', priceLineVisible:false, lastValueVisible:false, base:0});
-chart.priceScale('pos').applyOptions({scaleMargins:{top:0.9, bottom:0}, visible:false});
 function px(p){ return p >= 1000 ? p.toLocaleString('en-US',{maximumFractionDigits:0}) : p >= 1 ? p.toFixed(p>=100?2:3) : p.toPrecision(4); }
+const pct = v => (v>0?'+':'') + v.toFixed(1) + '%';
 async function j(u){ const r = await fetch(u + (u.includes('?')?'&':'?') + tok); return r.json(); }
-const fmt = t => new Date(t*1000).toISOString().slice(0,16).replace('T',' ');
-const step = () => tf==='1d' ? 86400 : 3600;
+const fmt = (t, d) => new Date(t*1000).toISOString().slice(0, d ? 10 : 16).replace('T',' ');
+const step = () => S.tf==='1d' ? 86400 : 3600, snap = x => Math.floor(x/step())*step();
 const EXIT = {tp2:'цель 2', tp1:'цель 1', stop:'стоп', breakeven_stop:'безубыток после цели 1', timeout:'по времени', trail_stop:'трейлинг стоп'};
-// --- рисование зон сигналов поверх графика
+function idx(t){ let lo=0, hi=times.length; while(lo<hi){const m=(lo+hi)>>1; if(times[m]<t) lo=m+1; else hi=m;} return lo; }
+function xOf(t){ if (!times.length) return null; const tt = snap(t); let i = idx(tt);
+  if (i>=times.length) i = times.length-1 + (tt-times[times.length-1])/step(); return chart.timeScale().logicalToCoordinate(i); }
+// ---------- рисование поверх графика
 const cv = $('ov'), g = cv.getContext('2d');
-function xOf(t){ if (!times.length) return null; let lo=0, hi=times.length; const tt = Math.floor(t/step())*step();
-  while (lo<hi){ const m=(lo+hi)>>1; if (times[m]<tt) lo=m+1; else hi=m; }
-  if (lo>=times.length) lo = times.length-1 + (tt-times[times.length-1])/step();
-  return chart.timeScale().logicalToCoordinate(lo); }
-function chip(x, y, text, bg){ g.font='600 12px -apple-system,Segoe UI,Roboto,sans-serif'; const w=g.measureText(text).width+12;
-  g.fillStyle=bg; g.beginPath(); g.roundRect ? g.roundRect(x, y-10, w, 20, 4) : g.rect(x, y-10, w, 20); g.fill();
-  g.fillStyle='#0d1017'; g.fillText(text, x+6, y+4); }
+function chip(x, y, text, bg, fg){ g.font='600 12px -apple-system,Segoe UI,Roboto,sans-serif'; const w=g.measureText(text).width+12;
+  g.fillStyle=bg; g.beginPath(); g.roundRect ? g.roundRect(x, y-10, w, 20, 4) : g.rect(x, y-10, w, 20); g.fill(); g.fillStyle=fg||'#0d1017'; g.fillText(text, x+6, y+4); return w; }
 function draw(){
   const W = chart.timeScale().width(), H = $('c').clientHeight - 28, dpr = devicePixelRatio || 1;
   cv.width = W*dpr; cv.height = H*dpr; cv.style.width = W+'px'; cv.style.height = H+'px'; g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-  trades.forEach((t, i) => {
-    if (t.entry == null) return;
-    const sel = i === cur, x1 = xOf(t.entry_time), last = times[times.length-1] || t.entry_time;
-    let x2 = xOf(t.exit_time || last); if (x1==null || x2==null) return; x2 = Math.max(x2, x1 + 6);
-    if (x2 < 0 || x1 > W) return;
+  const last = times[times.length-1];
+  items.forEach((t, i) => {
+    const sel = i === cur, x1 = xOf(t.entry_time); let x2 = xOf(t.exit_time || last);
+    if (x1==null || x2==null) return; x2 = Math.max(x2, x1 + 4); if (x2 < 0 || x1 > W) return;
+    if (S.view === 'portfolio') {                       // позиция портфеля: фон на всю высоту
+      const c = t.side==='long' ? '61,220,151' : '255,107,107';
+      g.fillStyle = `rgba(${c},${sel ? .1 : .05})`; g.fillRect(x1, 0, x2-x1, H);
+      g.fillStyle = `rgba(${c},${sel ? 1 : .6})`; g.fillRect(x1, 0, x2-x1, 4);
+      if (sel) { g.strokeStyle = `rgba(${c},.9)`; g.setLineDash([4,4]); g.beginPath(); g.moveTo(x1,0); g.lineTo(x1,H); g.moveTo(x2,0); g.lineTo(x2,H); g.stroke(); g.setLineDash([]); }
+      if (x2 - x1 > 70 || sel) chip(Math.max(x1+4, 2), 18, (t.side==='long'?'ЛОНГ ':'ШОРТ ') + (t.pnl!=null ? pct(t.pnl) : ''), t.side==='long'?G:R);
+      return;
+    }
     const y = p => s.priceToCoordinate(p), ye = y(t.entry), ys = y(t.stop), y1 = y(t.tp1), y2 = y(t.tp2);
     if ([ye,ys,y1,y2].some(v => v==null)) return;
     const a = sel ? 1 : .45;
@@ -101,101 +113,127 @@ function draw(){
     g.fillStyle = `rgba(255,107,107,${.2*a})`; g.fillRect(x1, Math.min(ye,ys), x2-x1, Math.abs(ys-ye));
     const line = (yy, c, dash) => { g.strokeStyle=c; g.globalAlpha=a; g.setLineDash(dash||[]); g.lineWidth=1.3;
       g.beginPath(); g.moveTo(x1, yy); g.lineTo(x2, yy); g.stroke(); g.setLineDash([]); g.globalAlpha=1; };
-    line(y2,'#3ddc97'); line(y1,'#3ddc97',[3,3]); line(ye,'#5b8cff'); line(ys,'#ff6b6b');
+    line(y2,G); line(y1,G,[3,3]); line(ye,B); line(ys,R);
     if (sel) { const lx = Math.min(x2 + 6, W - 120);
-      chip(lx, y2, 'TP2 '+px(t.tp2), '#3ddc97'); chip(lx, y1, 'TP1 '+px(t.tp1), '#3ddc97');
-      chip(lx, ye, 'Вход '+px(t.entry), '#7aa7ff'); chip(lx, ys, 'Стоп '+px(t.stop), '#ff6b6b'); }
+      chip(lx, y2, 'TP2 '+px(t.tp2), G); chip(lx, y1, 'TP1 '+px(t.tp1), G); chip(lx, ye, 'Вход '+px(t.entry), '#7aa7ff'); chip(lx, ys, 'Стоп '+px(t.stop), R); }
   });
 }
 const redraw = () => requestAnimationFrame(draw);
-chart.timeScale().subscribeVisibleLogicalRangeChange(redraw); chart.timeScale().subscribeSizeChange(redraw);
-chart.subscribeCrosshairMove(redraw); new ResizeObserver(redraw).observe($('c'));
-// --- данные
+chart.timeScale().subscribeVisibleLogicalRangeChange(redraw); chart.timeScale().subscribeSizeChange(redraw); new ResizeObserver(redraw).observe($('c'));
+chart.subscribeClick(p => { if (!p.time || !items.length) return;      // клик по графику выбирает ближайшую сделку
+  let best = -1, d = 1e18; items.forEach((t,i) => { const a = t.entry_time, b = t.exit_time || 4e9;
+    const dist = p.time >= a && p.time <= b ? 0 : Math.min(Math.abs(p.time-a), Math.abs(p.time-b)); if (dist < d) { d = dist; best = i; } });
+  if (best >= 0 && d < step()*40) go(best); });
+// ---------- данные
+function segments(marks){                                 // смены стороны портфеля -> отрезки позиций с результатом
+  const out = []; let open = null;
+  const price = t => { const i = Math.min(idx(t), daily.length-1); return i >= 0 && daily[i] ? daily[i].open : null; };
+  for (const m of marks) {
+    if (open && m.side !== (open.side==='long'?1:-1)) { open.exit_time = m.time; open.exit = price(m.time); out.push(open); open = null; }
+    if (!open && m.side !== 0) open = {side: m.side>0?'long':'short', entry_time: m.time, entry: price(m.time)};
+  }
+  if (open) { open.exit_time = null; open.exit = daily.length ? daily[daily.length-1].close : null; out.push(open); }
+  out.forEach(t => { t.pnl = t.entry && t.exit ? (t.exit/t.entry - 1) * 100 * (t.side==='long'?1:-1) : null; t.r = t.pnl; });
+  return out;
+}
 async function loadCandles(sym){
-  cs = await j('api/candles?symbol='+sym+'&tf='+tf+(tf==='1h' && center ? '&center='+center : ''));
+  cs = await j('api/candles?symbol='+sym+'&tf='+S.tf+(S.tf==='1h' && center ? '&center='+center : ''));
   cs = cs.filter(c => c.open!=null && c.close!=null); times = cs.map(c => c.time); s.setData(cs);
-  const marks = (await j('api/marks?symbol='+sym+'&source='+source)).sort((a,b)=>a.time-b.time);
-  let k = 0, side = 0; band.setData(cs.map(c => { while (k < marks.length && marks[k].time <= c.time) side = marks[k++].side;
-    return {time:c.time, value: side===0 ? 0 : 1, color: side>0 ? 'rgba(61,220,151,.55)' : side<0 ? 'rgba(255,107,107,.55)' : 'rgba(0,0,0,0)'}; }));
   const m = [];
-  for (const t of trades) { const long = t.side==='long', sn = x => Math.floor(x/step())*step();
-    m.push({time:sn(t.entry_time), position: long?'belowBar':'aboveBar', color:'#5b8cff', shape: long?'arrowUp':'arrowDown', size:1});
-    if (t.exit_time && t.r != null) m.push({time:sn(t.exit_time), position: long?'aboveBar':'belowBar', color: t.r>0?'#3ddc97':'#ff6b6b',
-      shape:'circle', size:1, text: tf==='1h' ? (t.r>0?'+':'')+t.r.toFixed(1)+'R' : ''}); }
-  s.setMarkers(m.filter(x => x.time >= (times[0]||0) && x.time <= (times[times.length-1]||0)).sort((a,b)=>a.time-b.time));
-  const e = $('empty');
-  if (!cs.length) { e.style.display='flex'; e.textContent='По этой монете ещё нет часовых свечей: бот докачивает историю, обнови страницу через пару минут.'; }
-  else e.style.display='none';
+  items.forEach((t, i) => { const long = t.side==='long';
+    if (S.view==='signals') {
+      m.push({time:snap(t.entry_time), position: long?'belowBar':'aboveBar', color:B, shape: long?'arrowUp':'arrowDown', size: i===cur?2:1, text: '#'+(i+1)});
+      if (t.exit_time && t.r != null) m.push({time:snap(t.exit_time), position: long?'aboveBar':'belowBar', color: t.r>0?G:R,
+        shape:'circle', size:1, text: S.tf==='1h' ? (t.r>0?'+':'')+t.r.toFixed(1)+'R' : ''});
+    } else {
+      m.push({time:snap(t.entry_time), position: long?'belowBar':'aboveBar', color: long?G:R, shape: long?'arrowUp':'arrowDown', size: i===cur?2:1});
+    } });
+  s.setMarkers(m.filter(x => times.length && x.time >= times[0] && x.time <= times[times.length-1]).sort((a,b)=>a.time-b.time));
+  $('empty').style.display = cs.length ? 'none' : 'flex';
+  $('empty').textContent = 'По этой монете ещё нет свечей: бот докачивает историю, обнови страницу через пару минут.';
+  redraw();
 }
-function focus(i){
-  if (!trades.length) { cur=-1; renderDet(); redraw(); return; }
-  cur = Math.max(0, Math.min(trades.length-1, i)); const t = trades[cur];
-  const span = Math.max((t.exit_time || t.entry_time) - t.entry_time, step()*10);
-  const lo = xIdx(t.entry_time - span*1.5), hi = xIdx((t.exit_time||t.entry_time) + span*1.2);
-  if (lo!=null && hi!=null) chart.timeScale().setVisibleLogicalRange({from: lo, to: Math.max(hi, lo+30)});
-  renderDet(); renderTable(); redraw();
-}
-function xIdx(t){ if (!times.length) return null; let lo=0, hi=times.length; while(lo<hi){const m=(lo+hi)>>1; if(times[m]<t) lo=m+1; else hi=m;} return lo; }
 async function go(i){
-  const t = trades[i]; if (!t) return focus(i);
-  if (tf==='1h' && (!times.length || t.entry_time < times[0] || (t.exit_time||t.entry_time) > times[times.length-1])) {
-    center = t.entry_time; await loadCandles($('sym').value); }
-  focus(i);
+  if (!items.length) { cur=-1; render(); return; }
+  cur = Math.max(0, Math.min(items.length-1, i)); const t = items[cur];
+  if (S.tf==='1h' && (!times.length || t.entry_time < times[0] || (t.exit_time||t.entry_time) > times[times.length-1] + 3600)) {
+    center = t.entry_time; await loadCandles($('sym').value); } else await loadCandles($('sym').value);
+  const end = t.exit_time || times[times.length-1], span = Math.max(end - t.entry_time, step()*12);
+  chart.timeScale().setVisibleLogicalRange({from: idx(t.entry_time - span*0.8), to: idx(end + span*0.5) + 3});
+  render(); redraw();
 }
-function renderDet(){
-  const t = trades[cur];
-  $('cnt').textContent = trades.length ? `сигнал ${cur+1} из ${trades.length}` : 'по этой монете сигналов нет';
-  $('prev').disabled = cur <= 0; $('next').disabled = cur >= trades.length-1;
+function render(){
+  const t = items[cur], name = $('sym').value.replace('USDT',''), P = S.view==='portfolio';
+  const noun = P ? 'позиция' : 'сигнал';
+  $('cnt').textContent = items.length ? `${noun} ${cur+1} из ${items.length}` : (P ? 'позиций портфеля нет' : 'сигналов нет');
+  $('prev').disabled = cur <= 0; $('next').disabled = cur >= items.length-1;
   $('why').style.display = t ? 'none' : 'block';
   if (!t) { $('ttl').textContent=''; $('bdg').innerHTML=''; $('when').textContent=''; $('det').innerHTML='';
-    const name = $('sym').value.replace('USDT',''), total = all.length;
-    $('why').innerHTML = source==='live' ? `По ${name} бот ещё не публиковал сигналов. Бэктест истории: кнопка «Бэктест».` :
-      ST.state==='work' ? `⏳ Бэктест пересчитывается на полной истории (${ST.pct}%). Сигналы появятся, когда полоса дойдёт до 100%.` :
-      !total ? 'Бэктест ещё не посчитан или в истории нет данных открытого интереса (смотри предупреждение выше).' :
-      `За период бэктеста${BT.period ? ' ' + BT.period : ''} по ${name} сигналов не было. Часовая стратегия входит только после сильного слива `+
-      `с падением открытого интереса (капитуляция), это редкое событие: всего ${total} сигналов по всем монетам. `+
-      `Монеты с сигналами стоят вверху списка, рядом число сигналов. Основная прибыль идёт от трендового портфеля: `+
-      `полоса внизу графика и страница «обзор и бэктест портфеля».`;
-    return; }
-  $('ttl').textContent = t.symbol.replace('USDT','');
-  $('bdg').innerHTML = `<span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>`;
-  $('when').textContent = 'вход ' + fmt(t.entry_time) + ' UTC' + (t.exit_time ? ', выход ' + fmt(t.exit_time) : ', сделка открыта');
-  const res = t.r==null ? 'открыта' : (t.r>0?'+':'')+t.r.toFixed(2)+'R' + (t.pnl_pct!=null ? ` (${t.pnl_pct>0?'+':''}${t.pnl_pct.toFixed(2)}%)` : '');
-  const c = [['Вход',px(t.entry),'c-e'],['Стоп',px(t.stop),'c-s'],['TP1',px(t.tp1),'c-t'],['TP2',px(t.tp2),'c-t'],
-    ['Риск', t.risk_pct!=null ? t.risk_pct.toFixed(2)+'%' : '', ''],['Плечо', t.leverage!=null ? 'x'+t.leverage.toFixed(1) : '', ''],
-    ['Итог', `<span class="${t.r>0?'pos':t.r<0?'neg':''}">${res}</span>`, ''],['Закрыта', EXIT[t.exit_event] || (t.exit_time?'':'—'), '']];
-  $('det').innerHTML = c.filter(x=>x[1]!=='').map(([k,v,cl]) => `<div class="card ${cl}"><span>${k}</span><b>${v}</b></div>`).join('');
-}
-function renderTable(){
-  $('th').textContent = (source==='live' ? 'Живые сигналы' : 'Сигналы бэктеста') + ' по монете';
-  $('tbl').querySelector('tbody').innerHTML = trades.map((t,i) => [t,i]).reverse().map(([t,i]) =>
-    `<tr data-i="${i}" class="${i===cur?'sel':''}"><td>${t.symbol.replace('USDT','')}</td><td class="${t.side==='long'?'pos':'neg'}">${t.side==='long'?'лонг':'шорт'}</td><td>${fmt(t.entry_time)}</td><td>${t.exit_time?fmt(t.exit_time):'открыта'}</td><td>${EXIT[t.exit_event]||''}</td><td class="${t.r>0?'pos':t.r<0?'neg':''}">${t.r==null?'':(t.r>0?'+':'')+t.r.toFixed(2)+'R'}</td></tr>`).join('') ||
-    '<tr><td colspan=6 class="muted">по этой монете сигналов нет, выбери монету с числом в списке</td></tr>';
+    $('why').innerHTML = P ? `Трендовый портфель по ${name} позиций не открывал${S.source==='live' ? ' с момента запуска бота' : ' за период бэктеста'}.` :
+      S.source==='live' ? `По ${name} бот ещё не публиковал часовых сигналов. Историю смотри в режиме «Бэктест».` :
+      ST.state==='work' ? `⏳ Бэктест пересчитывается (${ST.pct||0}%). Сигналы появятся, когда полоса дойдёт до 100%.` :
+      !all.length ? 'Бэктест ещё не посчитан или нет истории открытого интереса (смотри предупреждение выше).' :
+      `За период бэктеста ${BT.period||''} по ${name} часовых сигналов не было: стратегия входит только после сильного слива с падением открытого интереса. `+
+      `Всего ${all.length} сигналов по всем монетам, монеты с сигналами стоят вверху списка. Основная доходность у трендового портфеля: переключатель «Трендовый портфель».`;
+  } else {
+    $('ttl').textContent = (P ? '' : '#'+(cur+1)+' ') + name;
+    $('bdg').innerHTML = `<span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>`;
+    $('when').textContent = fmt(t.entry_time, P) + ' → ' + (t.exit_time ? fmt(t.exit_time, P) : 'сейчас, позиция открыта') +
+      (P ? ` · ${Math.round(((t.exit_time || Date.now()/1000) - t.entry_time)/86400)} дн.` : ' UTC');
+    const res = t.r==null ? 'открыта' : P ? pct(t.pnl) : (t.r>0?'+':'')+t.r.toFixed(2)+'R' + (t.pnl_pct!=null ? ` (${t.pnl_pct>0?'+':''}${t.pnl_pct.toFixed(2)}%)` : '');
+    const c = P ? [['Цена входа',t.entry?px(t.entry):'','c-e'],['Цена выхода',t.exit?px(t.exit):'', ''],
+        ['Движение в нашу сторону',`<span class="${t.pnl>0?'pos':'neg'}">${res}</span>`,''],['Статус',t.exit_time?'закрыта':'открыта','']]
+      : [['Вход',px(t.entry),'c-e'],['Стоп',px(t.stop),'c-s'],['TP1',px(t.tp1),'c-t'],['TP2',px(t.tp2),'c-t'],
+        ['Риск', t.risk_pct!=null ? t.risk_pct.toFixed(2)+'%' : '', ''],['Плечо', t.leverage!=null ? 'x'+t.leverage.toFixed(1) : '', ''],
+        ['Итог', `<span class="${t.r>0?'pos':t.r<0?'neg':''}">${res}</span>`, ''],['Закрыта', EXIT[t.exit_event] || (t.exit_time?'':'—'), '']];
+    $('det').innerHTML = c.filter(x=>x[1]!=='').map(([k,v,cl]) => `<div class="card ${cl}"><span>${k}</span><b>${v}</b></div>`).join('');
+  }
+  // сводка по монете
+  const done = items.filter(x => x.r != null), win = done.filter(x => x.r > 0).length;
+  const tot = done.reduce((a,x) => a + x.r, 0);
+  $('sum').innerHTML = items.length ? `<span><b>${name}</b></span><span>${P?'позиций':'сигналов'}: <b>${items.length}</b></span>
+    <span>в плюс: <b class="pos">${win}</b>, в минус: <b class="neg">${done.length-win}</b></span>
+    <span>${P?'сумма движений':'итог'}: <b class="${tot>0?'pos':'neg'}">${P ? pct(tot) : (tot>0?'+':'')+tot.toFixed(2)+'R'}</b></span>` : '';
+  $('th').textContent = (P ? 'Позиции трендового портфеля' : 'Часовые сигналы') + ' по ' + name + (S.source==='live' ? ' (живые)' : ' (бэктест)');
+  $('thead').innerHTML = P ? '<tr><th>Сторона</th><th>Открыта</th><th>Закрыта</th><th>Дней</th><th>Результат</th></tr>'
+    : '<tr><th>#</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>Как закрылась</th><th>Результат</th></tr>';
+  $('tbl').querySelector('tbody').innerHTML = items.map((t,i)=>[t,i]).reverse().map(([t,i]) => {
+    const side = `<td class="${t.side==='long'?'pos':'neg'}">${t.side==='long'?'лонг':'шорт'}</td>`, cl = t.r>0?'pos':t.r<0?'neg':'';
+    return `<tr data-i="${i}" class="${i===cur?'sel':''}">` + (P
+      ? `${side}<td>${fmt(t.entry_time,1)}</td><td>${t.exit_time?fmt(t.exit_time,1):'открыта'}</td><td>${Math.round(((t.exit_time||Date.now()/1000)-t.entry_time)/86400)}</td><td class="${cl}">${t.pnl==null?'':pct(t.pnl)}</td>`
+      : `<td>${i+1}</td>${side}<td>${fmt(t.entry_time)}</td><td>${t.exit_time?fmt(t.exit_time):'открыта'}</td><td>${EXIT[t.exit_event]||''}</td><td class="${cl}">${t.r==null?'':(t.r>0?'+':'')+t.r.toFixed(2)+'R'}</td>`) + '</tr>'; }).join('')
+    || `<tr><td colspan=6 class="muted">пусто</td></tr>`;
   document.querySelectorAll('#tbl tbody tr[data-i]').forEach(r => r.onclick = () => { go(+r.dataset.i); window.scrollTo({top:0, behavior:'smooth'}); });
+  $('legend').innerHTML = P
+    ? '<span><i style="background:rgba(61,220,151,.5)"></i>портфель держит лонг</span><span><i style="background:rgba(255,107,107,.5)"></i>портфель держит шорт</span><span>▲▼ открытие позиции</span><span>процент: движение цены в нашу сторону за время позиции (вес в портфеле меняется каждый день)</span>'
+    : '<span><i style="background:'+B+'"></i>▲▼ вход, #номер сигнала</span><span><i style="background:rgba(61,220,151,.5)"></i>зона цели</span><span><i style="background:rgba(255,107,107,.5)"></i>зона риска</span><span><i style="background:'+G+';border-radius:50%"></i><i style="background:'+R+';border-radius:50%"></i>выход в плюс / минус</span>';
+  $('hint').textContent = 'Листай ◀ ▶ или стрелками на клавиатуре, кликни по сделке на графике или в таблице. ' +
+    (S.source==='live' ? 'Живые: то, что ушло в канал.' : 'Бэктест: история, в канал не публикуется.');
 }
 async function fillSymbols(){
   const sel = $('sym'), keep = sel.value || q.get('symbol');
-  const syms = await j('api/symbols'); all = await j('api/trades?source='+source);
+  const syms = await j('api/symbols'); all = await j('api/trades?source='+S.source);
   const n = {}; all.forEach(t => n[t.symbol] = (n[t.symbol]||0)+1);
-  const list = [...new Set([...syms, ...Object.keys(n)])].sort((a,b) => (n[b]||0)-(n[a]||0));
-  sel.innerHTML = list.map(x => `<option value="${x}">${x.replace('USDT','')}${n[x] ? ' · '+n[x] : ''}</option>`).join('');
+  const list = [...new Set([...syms, ...Object.keys(n)])].sort((a,b) => (n[b]||0)-(n[a]||0) || syms.indexOf(a)-syms.indexOf(b));
+  sel.innerHTML = list.map(x => `<option value="${x}">${x.replace('USDT','')}${S.view==='signals' && n[x] ? ' · '+n[x]+' сигн.' : ''}</option>`).join('');
   if (keep && list.includes(keep)) sel.value = keep;
 }
 async function load(){
-  const sym = $('sym').value; center = 0; s.applyOptions({priceLineVisible: source==='live'});
-  trades = all.filter(t => t.symbol === sym).sort((a,b) => a.entry_time-b.entry_time);
-  await loadCandles(sym);
-  if (trades.length) await go(trades.length-1);
-  else { cur=-1; if (tf==='1h') chart.timeScale().setVisibleLogicalRange({from: cs.length-240, to: cs.length+12}); else chart.timeScale().fitContent(); renderDet(); renderTable(); redraw(); }
-  const st = await j('api/stats?source='+source); if (source==='backtest') BT = {period: st['период'] || ''}; renderDet();
-  const names = {signals:'сигналов', open:'открыто', closed:'закрыто', 'win %':'прибыльных, %', 'sum R':'сумма R', mode:'режим',
-    version:'версия', trades:'сделок (все монеты)', 'return %':'доходность, %', 'buy&hold %':'buy and hold, %', 'max DD %':'просадка, %',
-    'profit factor':'profit factor', 'beats B&H and cash':'лучше рынка и кэша', backtest:'бэктест'};
+  const sym = $('sym').value; center = 0; s.applyOptions({priceLineVisible: S.source==='live'});
+  chart.applyOptions({timeScale:{timeVisible: S.tf==='1h'}});
+  if (S.view === 'signals') items = all.filter(t => t.symbol === sym).sort((a,b) => a.entry_time-b.entry_time);
+  else { daily = await j('api/candles?symbol='+sym+'&tf=1d'); const dt = daily.map(c => c.time);
+    const save = times; times = dt; items = segments((await j('api/marks?symbol='+sym+'&source='+S.source))
+      .filter(m => S.source==='backtest' ? m.kind==='portfolio' : m.kind==='portfolio_live').sort((a,b)=>a.time-b.time)); times = save; }
+  if (items.length) await go(items.length-1);
+  else { cur=-1; await loadCandles(sym); if (S.tf==='1h') chart.timeScale().setVisibleLogicalRange({from: cs.length-240, to: cs.length+8}); else chart.timeScale().fitContent(); render(); }
+  const st = await j('api/stats?source=backtest'); BT = {period: st['период'] || ''};
+  const names = {version:'версия', 'посчитан':'посчитан', trades:'сделок', 'return %':'доходность, %', 'buy&hold %':'buy and hold, %', 'max DD %':'просадка, %',
+    'win %':'прибыльных, %', 'profit factor':'profit factor', 'beats B&H and cash':'лучше рынка и кэша', backtest:'бэктест'};
   $('stats').innerHTML = Object.entries(st).filter(([k]) => k!=='период').map(([k,v]) =>
     `<div class="card"><span>${names[k]||k}</span><b>${v==='yes'?'да':v==='no'?'нет':v}</b></div>`).join('');
-  $('note').textContent = source==='live' ? 'Живая работа: то, что ушло в канал' : 'Бэктест часовых сигналов, в канал не публикуется';
+  render();
 }
-let ST = {};
 async function poll(){ try { const st = await j('api/status'); ST = st; const b = $('status');
   const show = st.state==='work' || st.state==='fail' || (st.warn||[]).length || (st.state==='ok' && Date.now()/1000 - st.ts < 60);
   b.style.display = show ? 'block' : 'none'; b.className = 'st-'+st.state;
@@ -204,16 +242,15 @@ async function poll(){ try { const st = await j('api/status'); ST = st; const b 
     <span class="muted">&nbsp; ${st.text||''}</span><div class="bar"><i style="width:${st.state==='ok'?100:st.pct||0}%"></i></div>` +
     (st.warn||[]).map(w => `<div class="warn">⚠️ ${w}</div>`).join('');
   if (st.state==='ok' && poll.was==='work') { await fillSymbols(); load(); } poll.was = st.state; } catch(e){} setTimeout(poll, 3000); }
-const toggle = (a, b, on) => { $(a).classList.toggle('on', on); $(b).classList.toggle('on', !on); };
-$('t1h').onclick = () => { tf='1h'; toggle('t1h','t1d',true); chart.applyOptions({timeScale:{timeVisible:true}}); load(); };
-$('t1d').onclick = () => { tf='1d'; toggle('t1h','t1d',false); chart.applyOptions({timeScale:{timeVisible:false}}); load(); };
-$('bLive').onclick = async () => { source='live'; toggle('bLive','bBt',true); await fillSymbols(); load(); };
-$('bBt').onclick = async () => { source='backtest'; toggle('bLive','bBt',false); await fillSymbols(); load(); };
+function setUI(){ document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', S[b.dataset.g] === b.dataset.v)); }
+document.querySelectorAll('.seg button').forEach(b => b.onclick = async () => {
+  S[b.dataset.g] = b.dataset.v;
+  if (b.dataset.g === 'view') S.tf = S.view === 'portfolio' ? '1d' : '1h';
+  setUI(); if (b.dataset.g !== 'tf') await fillSymbols(); load(); });
 $('prev').onclick = () => go(cur-1); $('next').onclick = () => go(cur+1);
-document.addEventListener('keydown', e => { if (e.key==='ArrowLeft') go(cur-1); if (e.key==='ArrowRight') go(cur+1); });
+document.addEventListener('keydown', e => { if (e.target.tagName==='SELECT') return; if (e.key==='ArrowLeft') go(cur-1); if (e.key==='ArrowRight') go(cur+1); });
 $('sym').onchange = load;
-(async () => { $('ovl').href = 'overview' + (tok ? '?'+tok : '');
-  if (q.get('source')==='backtest') { source='backtest'; toggle('bLive','bBt',false); }
+(async () => { $('ovl').href = 'overview' + (tok ? '?'+tok : ''); if (S.view==='portfolio') S.tf='1d'; setUI();
   await fillSymbols(); load(); poll(); })();
 </script></body></html>
 """

@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 STATUS = {"state": "idle", "text": "", "pct": 0, "warn": []}
 
 
-def _set(state, text, pct=None):
+def _set(state, text, pct=None, quiet=False):
     """state work/ok/fail; pct общий прогресс 0..100; предупреждения копятся отдельно и не затираются этапами."""
     if state == "warn":
         STATUS["warn"].append(text)
@@ -25,6 +25,9 @@ def _set(state, text, pct=None):
         STATUS["pct"] = int(pct)
     STATUS.update(state=state, text=text, ts=int(time.time()))
     p = STATUS["pct"]
+    if quiet and time.time() - STATUS.get("printed", 0) < 30:   # в консоль не чаще раза в 30 секунд
+        return
+    STATUS["printed"] = time.time()
     bar = "█" * (p // 5) + "░" * (20 - p // 5)
     print(("⏳ " if state == "work" else "✅ " if state == "ok" else "❌ ") + f"[{bar}] {p}%  {text}", flush=True)
 
@@ -77,8 +80,15 @@ async def run(cfg, conn, http):
         for i, s in enumerate(todo, 1):
             name = s.replace("USDT", "")
             if not conn.execute("SELECT 1 FROM open_interest WHERE symbol=? AND ts<? LIMIT 1", (s, now - 60 * 86_400_000)).fetchone():
-                _set("work", f"История {name} ({i}/{len(todo)}): архив Binance (OI, фандинг, свечи)", 3 + 67 * (i - 1) / len(todo))
-                await Archive(http, conn).symbol_all(s, t0, date.today() - timedelta(days=1))
+                arc, end_d = Archive(http, conn), date.today() - timedelta(days=1)
+                exp = Archive.expected_files(t0, end_d)
+                job = asyncio.create_task(arc.symbol_all(s, t0, end_d))
+                while not job.done():               # полоса двигается по мере скачивания файлов
+                    k = min(arc.done / exp, 1)
+                    _set("work", f"История {name} ({i}/{len(todo)}): архив Binance, файлов {arc.done} из ~{exp}",
+                         3 + 67 * (i - 1 + 0.8 * k) / len(todo), quiet=True)
+                    await asyncio.wait({job}, timeout=2)
+                await job
             _set("work", f"История {name} ({i}/{len(todo)}): докачиваю пропуски через API", 3 + 67 * (i - .4) / len(todo))
             await fill(conn, bn, s, start, now)
         bad = [s.replace("USDT", "") for s in syms if not ok(s)]

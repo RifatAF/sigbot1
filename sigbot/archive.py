@@ -62,8 +62,9 @@ def parse_funding_rows(rows) -> list[tuple]:
 
 
 class Archive:
-    def __init__(self, http: Http, conn, concurrency: int = 8):
+    def __init__(self, http: Http, conn, concurrency: int = 16):
         self.http, self.conn = http, conn
+        self.done = 0                     # скачано файлов: для полосы прогресса
         self.sem = asyncio.Semaphore(concurrency)
 
     failed = 0
@@ -74,10 +75,12 @@ class Archive:
             try:
                 async with self.sem:
                     blob = await self.http.get_bytes(u)
+                self.done += 1
                 return _rows(blob) if blob else None
             except Exception as e:
                 last = e
         Archive.failed += 1
+        self.done += 1
         log.warning("archive: %s", str(last)[:150])
         return None
 
@@ -152,6 +155,12 @@ class Archive:
             self.conn.executemany("INSERT OR REPLACE INTO basis VALUES (?,?,?)", [(symbol, *x) for x in data])
             n += len(data)
         return n
+
+    @staticmethod
+    def expected_files(start: date, end: date) -> int:
+        months = (end.year - start.year) * 12 + end.month - start.month + 1
+        m_start = max(start, date.today() - timedelta(days=800))
+        return months * 4 + 30 * 3 + (end - m_start).days + 1   # 4 вида месячных, дневные текущего месяца, метрики
 
     async def symbol_all(self, symbol: str, start: date, end: date):
         # метрики OI лежат по одному файлу в день: за 6 лет это часы загрузки, а движку хватает последних 2 лет
