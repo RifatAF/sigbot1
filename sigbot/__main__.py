@@ -9,6 +9,14 @@ from datetime import date, timedelta
 
 from . import config, db, ledger, settings
 
+# бывшие крупные монеты, часть уже снята с торгов: нужны для честного бэктеста портфеля с 2020 года
+HISTORY_EXTRA = [
+    "LUNAUSDT", "FTTUSDT", "EOSUSDT", "XTZUSDT", "MATICUSDT", "THETAUSDT", "ALGOUSDT", "AXSUSDT", "SANDUSDT",
+    "MANAUSDT", "ICPUSDT", "FTMUSDT", "GALAUSDT", "CHZUSDT", "XMRUSDT", "ZECUSDT", "DASHUSDT", "SUSHIUSDT",
+    "COMPUSDT", "MKRUSDT", "CRVUSDT", "EGLDUSDT", "KSMUSDT", "1INCHUSDT", "SNXUSDT", "YFIUSDT", "WAVESUSDT",
+    "ZILUSDT", "GMTUSDT", "APEUSDT",
+]
+
 FALLBACK_UNIVERSE = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "BNBUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT",
     "SUIUSDT", "LTCUSDT", "DOTUSDT", "BCHUSDT", "TRXUSDT", "NEARUSDT", "APTUSDT", "AAVEUSDT", "UNIUSDT",
@@ -51,6 +59,9 @@ async def cmd_backfill(cfg, conn, args):
     http = Http()
     try:
         syms = args.symbols.split(",") if args.symbols else await _universe(cfg, conn, http)
+        if args.long:          # длинная история для сводного бэктеста: с 2020 года и с умершими монетами
+            syms = list(dict.fromkeys(syms + FALLBACK_UNIVERSE + HISTORY_EXTRA))
+            args.start = args.start or "2020-01-01"
         start = date.fromisoformat(args.start or cfg["backtest"]["start"]) - timedelta(days=40)
         end = date.fromisoformat(args.end) if args.end else date.today() - timedelta(days=1)
         arc = Archive(http, conn)
@@ -187,6 +198,7 @@ def main(argv=None):
     b.add_argument("--symbols")
     b.add_argument("--start")
     b.add_argument("--end")
+    b.add_argument("--long", action="store_true", help="история с 2020 года, 60 монет с умершими (для report)")
     t = sub.add_parser("backtest", help="walk forward бэктест и отчёт в reports/")
     t.add_argument("--symbols")
     t.add_argument("--start")

@@ -15,62 +15,86 @@ STATIC = Path(__file__).parent / "static"
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>sigbot</title><script src="static/lightweight-charts.js"></script>
-<style>body{margin:0;background:#0f1115;color:#e6e6e6;font:14px -apple-system,Segoe UI,Roboto,sans-serif}
-header{display:flex;gap:12px;align-items:center;padding:10px 16px;flex-wrap:wrap}
-select,button{background:#1b1f27;color:#e6e6e6;border:1px solid #2a2f3a;border-radius:6px;padding:6px 10px}
-button.on{background:#4c8bf5;border-color:#4c8bf5}#c{height:60vh;margin:0 16px}
+<style>
+body{margin:0;background:#0d1017;color:#e8ebf1;font:14px -apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;gap:10px;align-items:center;padding:12px 16px;flex-wrap:wrap}
+select,button{background:#151a24;color:#e8ebf1;border:1px solid #2b3345;border-radius:8px;padding:7px 12px;font-size:14px}
+button.on{background:#5b8cff;border-color:#5b8cff}.sep{width:1px;height:24px;background:#2b3345}
+a{color:#7aa7ff}.muted{color:#8a93a6}
+.legend{display:flex;gap:18px;flex-wrap:wrap;padding:0 16px 8px;font-size:13px;color:#a9b1c2}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+#c{height:64vh;margin:0 16px;border:1px solid #1b2130;border-radius:10px;overflow:hidden}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:16px}
-.card{background:#151922;border:1px solid #232836;border-radius:8px;padding:10px}
-.card b{display:block;font-size:20px;margin-top:4px}.muted{color:#8b93a1}
-table{width:calc(100% - 32px);margin:0 16px 24px;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid #232836;text-align:left}
-.bt{color:#b39ddb}.live{color:#4c8bf5}</style></head><body>
-<header><b>sigbot</b><a href="overview" id="ov" style="color:#7aa7ff">обзор и бэктест</a><select id="sym"></select>
-<button id="bLive" class="on">Live</button><button id="bBt">Backtest</button>
-<button id="t1h" class="on">1h</button><button id="t1d">1d</button>
+.card{background:#151a24;border-radius:10px;padding:10px 14px}.card b{display:block;font-size:22px;margin-top:4px}
+table{width:calc(100% - 32px);margin:0 16px 24px;border-collapse:collapse;font-variant-numeric:tabular-nums}
+td,th{padding:7px;border-bottom:1px solid #1b2130;text-align:left}.pos{color:#3ddc97}.neg{color:#ff6b6b}
+</style></head><body>
+<header><b>sigbot</b><a href="overview" id="ov">обзор и бэктест →</a><span class="sep"></span>
+<select id="sym"></select><span class="sep"></span>
+<button id="bLive" class="on">Живые</button><button id="bBt">Бэктест</button><span class="sep"></span>
+<button id="t1h">Час</button><button id="t1d" class="on">День</button>
 <span class="muted" id="note"></span></header>
+<div class="legend">
+<span><i style="background:#5b8cff"></i>вход часового сигнала (▲ лонг, ▼ шорт)</span>
+<span><i style="background:#3ddc97;border-radius:50%"></i>выход в плюс (на часовом графике подписан результат в R)</span>
+<span><i style="background:#ff6b6b;border-radius:50%"></i>выход в минус</span>
+<span><i style="background:rgba(61,220,151,.55)"></i><i style="background:rgba(255,107,107,.55)"></i>полоса внизу: портфель в лонге / в шорте по монете</span>
+</div>
 <div id="c"></div><div class="grid" id="stats"></div>
-<table id="tbl"><thead><tr><th>Source</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>R</th></tr></thead><tbody></tbody></table>
+<table id="tbl"><thead><tr><th>Монета</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>Результат</th></tr></thead><tbody></tbody></table>
 <script>
 const q = new URLSearchParams(location.search); const tok = q.get('token') ? '&token='+q.get('token') : '';
-let source = 'live', tf = '1h';
+let source = 'live', tf = '1d';
 const chart = LightweightCharts.createChart(document.getElementById('c'), {autoSize:true,
-  layout:{background:{color:'#0f1115'}, textColor:'#c9ced6'}, grid:{vertLines:{color:'#1b1f27'}, horzLines:{color:'#1b1f27'}},
-  timeScale:{timeVisible:true}});
-const s = chart.addCandlestickSeries({upColor:'#26a69a', downColor:'#ef5350', borderVisible:false, wickUpColor:'#26a69a', wickDownColor:'#ef5350'});
+  layout:{background:{color:'#0d1017'}, textColor:'#9aa3b5', fontSize:13},
+  grid:{vertLines:{visible:false}, horzLines:{color:'#161b26'}},
+  rightPriceScale:{borderVisible:false, scaleMargins:{top:0.05, bottom:0.18}}, timeScale:{borderVisible:false, timeVisible:false},
+  localization:{priceFormatter: p => p < 0 ? '' : p >= 1000 ? p.toFixed(0) : p >= 1 ? p.toFixed(2) : p.toPrecision(4)}});
+const s = chart.addCandlestickSeries({upColor:'#3ddc97', downColor:'#ff6b6b', borderVisible:false, wickUpColor:'#3ddc97', wickDownColor:'#ff6b6b'});
+const pos = chart.addHistogramSeries({priceScaleId:'pos', priceLineVisible:false, lastValueVisible:false, base:0});
+chart.priceScale('pos').applyOptions({scaleMargins:{top:0.86, bottom:0}, visible:false});
 async function j(u){ const r = await fetch(u + (u.includes('?')?'':'?') + tok); return r.json(); }
+const fmt = t => new Date(t*1000).toISOString().slice(0, tf==='1d' ? 10 : 16).replace('T',' ');
 async function load(){
   const sym = document.getElementById('sym').value;
-  s.setData(await j('api/candles?symbol='+sym+'&tf='+tf));
-  const snap = t => tf==='1d' ? Math.floor(t/86400)*86400 : t;
-  const tr = await j('api/trades?source='+source+'&symbol='+sym);
-  const m = [];
+  const cs = await j('api/candles?symbol='+sym+'&tf='+tf);
+  s.setData(cs);
+  const step = tf==='1d' ? 86400 : 3600, snap = t => Math.floor(t/step)*step;
+  // полоса позиции портфеля: из точек смены стороны в столбик на каждой свече
+  const marks = (await j('api/marks?symbol='+sym+'&source='+source)).sort((a,b)=>a.time-b.time);
+  let k = 0, side = 0; const bars = [];
+  for (const c of cs) { while (k < marks.length && marks[k].time <= c.time) side = marks[k++].side;
+    bars.push({time:c.time, value: side===0 ? 0 : 1,
+    color: side>0 ? 'rgba(61,220,151,.55)' : side<0 ? 'rgba(255,107,107,.55)' : 'rgba(0,0,0,0)'}); }
+  pos.setData(bars);
+  const tr = await j('api/trades?source='+source+'&symbol='+sym), m = [];
   for (const t of tr) {
-    const long = t.side === 'long', col = source==='live' ? '#4c8bf5' : '#b39ddb';
-    m.push({time:snap(t.entry_time), position: long?'belowBar':'aboveBar', color:col, shape: long?'arrowUp':'arrowDown', text:(source==='live'?'':'BT ')+t.side});
-    if (t.exit_time) m.push({time:snap(t.exit_time), position: long?'aboveBar':'belowBar', color: t.r>0?'#26a69a':'#ef5350',
-      shape:'circle', text:(t.r>0?'+':'')+t.r.toFixed(2)+'R'});
-  }
-  for (const k of await j('api/marks?symbol='+sym+'&source='+source)) {
-    const live = k.kind==='portfolio_live', pre = live ? 'P ' : 'BT P ';
-    if (k.side === 0) m.push({time:snap(k.time), position:'aboveBar', color:'#8b93a1', shape:'circle', text:pre+'exit'});
-    else m.push({time:snap(k.time), position: k.side>0?'belowBar':'aboveBar', color: k.side>0?'#3ddc97':'#ff6b6b',
-            shape: k.side>0?'arrowUp':'arrowDown', text:pre+(k.side>0?'long':'short')});
+    const long = t.side === 'long';
+    m.push({time:snap(t.entry_time), position: long?'belowBar':'aboveBar', color:'#5b8cff', shape: long?'arrowUp':'arrowDown', size:1});
+    if (t.exit_time && t.r != null) m.push({time:snap(t.exit_time), position: long?'aboveBar':'belowBar',
+      color: t.r>0?'#3ddc97':'#ff6b6b', shape:'circle', size:1, text: tf==='1h' ? (t.r>0?'+':'')+t.r.toFixed(1)+'R' : ''});
   }
   m.sort((a,b)=>a.time-b.time); s.setMarkers(m);
-  const all = await j('api/trades?source='+source);
-  document.querySelector('#tbl tbody').innerHTML = all.slice(-50).reverse().map(t =>
-    `<tr><td class="${source==='live'?'live':'bt'}">${source}</td><td>${t.symbol}</td><td>${t.side}</td><td>${new Date(t.entry_time*1000).toISOString().slice(0,16)}</td><td>${t.exit_time?new Date(t.exit_time*1000).toISOString().slice(0,16):'open'}</td><td>${t.r==null?'':t.r.toFixed(2)}</td></tr>`).join('');
+  if (tf==='1h') chart.timeScale().setVisibleLogicalRange({from: cs.length-240, to: cs.length+5}); else chart.timeScale().fitContent();
+  document.querySelector('#tbl tbody').innerHTML = tr.slice().reverse().slice(0,40).map(t =>
+    `<tr><td>${t.symbol.replace('USDT','')}</td><td class="${t.side==='long'?'pos':'neg'}">${t.side==='long'?'лонг':'шорт'}</td><td>${fmt(t.entry_time)}</td><td>${t.exit_time?fmt(t.exit_time):'открыта'}</td><td class="${t.r>0?'pos':t.r<0?'neg':''}">${t.r==null?'':(t.r>0?'+':'')+t.r.toFixed(2)+'R'}</td></tr>`).join('') ||
+    '<tr><td colspan=5 class="muted">по этой монете часовых сигналов нет</td></tr>';
   const st = await j('api/stats?source='+source);
-  document.getElementById('stats').innerHTML = Object.entries(st).map(([k,v]) => `<div class="card"><span class="muted">${k}</span><b>${v}</b></div>`).join('');
-  document.getElementById('note').textContent = source==='live' ? 'Live journal: only these go to the channel' : 'Backtest: never published';
+  const names = {signals:'сигналов', open:'открыто', closed:'закрыто', 'win %':'прибыльных, %', 'sum R':'сумма R', mode:'режим',
+    version:'версия', trades:'сделок', 'return %':'доходность, %', 'buy&hold %':'buy and hold, %', 'max DD %':'просадка, %',
+    'profit factor':'profit factor', 'beats B&H and cash':'лучше рынка и кэша', backtest:'бэктест'};
+  document.getElementById('stats').innerHTML = Object.entries(st).map(([k,v]) =>
+    `<div class="card"><span class="muted">${names[k]||k}</span><b>${v==='yes'?'да':v==='no'?'нет':v}</b></div>`).join('');
+  document.getElementById('note').textContent = source==='live' ? 'Живая работа: то, что ушло в канал' :
+    'Бэктест часовых сигналов и трендового портфеля, в канал не публикуется';
 }
-for (const [id,t] of [['t1h','1h'],['t1d','1d']]) document.getElementById(id).onclick = () => {
-  tf = t; document.getElementById('t1h').classList.toggle('on', t==='1h'); document.getElementById('t1d').classList.toggle('on', t==='1d');
-  chart.applyOptions({timeScale:{timeVisible: t==='1h'}}); load(); };
-for (const [id,src] of [['bLive','live'],['bBt','backtest']]) document.getElementById(id).onclick = () => {
-  source = src; document.getElementById('bLive').classList.toggle('on', src==='live'); document.getElementById('bBt').classList.toggle('on', src==='backtest'); load(); };
+const toggle = (a, b, on) => { document.getElementById(a).classList.toggle('on', on); document.getElementById(b).classList.toggle('on', !on); };
+document.getElementById('t1h').onclick = () => { tf='1h'; toggle('t1h','t1d',true); chart.applyOptions({timeScale:{timeVisible:true}}); load(); };
+document.getElementById('t1d').onclick = () => { tf='1d'; toggle('t1h','t1d',false); chart.applyOptions({timeScale:{timeVisible:false}}); load(); };
+document.getElementById('bLive').onclick = () => { source='live'; toggle('bLive','bBt',true); load(); };
+document.getElementById('bBt').onclick = () => { source='backtest'; toggle('bLive','bBt',false); load(); };
 (async () => { const syms = await j('api/symbols'); const sel = document.getElementById('sym');
-  sel.innerHTML = syms.map(x=>`<option>${x}</option>`).join(''); if (q.get('symbol')) sel.value = q.get('symbol');
+  sel.innerHTML = syms.map(x=>`<option value="${x}">${x.replace('USDT','')}</option>`).join(''); if (q.get('symbol')) sel.value = q.get('symbol');
   document.getElementById('ov').href = 'overview' + (q.get('token') ? '?token='+q.get('token') : '');
   sel.onchange = load; load(); })();
 </script></body></html>"""

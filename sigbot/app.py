@@ -79,6 +79,27 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
         await asyncio.sleep(60 - time.time() % 60 + 1)
 
 
+async def auto_update(pub):
+    """Раз в час: если в ветке на GitHub есть новые коммиты, выйти. run_sigbot.bat (или systemd) подтянет код
+    git pull, обновит зависимости и запустит бота заново. Выключить: AUTO_UPDATE=0 в .env."""
+    import subprocess
+    if os.environ.get("AUTO_UPDATE", "1") == "0":
+        return
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            run = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, timeout=120)
+            if run("fetch", "--quiet").returncode != 0:
+                continue
+            ahead = run("rev-list", "--count", "HEAD..@{u}").stdout.strip()
+            if ahead and ahead != "0":
+                log.warning("auto update: %s new commits, restarting", ahead)
+                await pub.notify_owner(f"🔄 Обновление: {ahead} новых изменений, перезапуск за минуту.")
+                os._exit(0)
+        except Exception as e:
+            log.warning("auto update check: %s", e)
+
+
 async def run(cfg, conn):
     http = Http()
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -109,6 +130,7 @@ async def run(cfg, conn):
     runner = await dashboard.serve(cfg, conn)
     log.info("dashboard on http://%s:%s", cfg["dashboard"]["host"], cfg["dashboard"]["port"])
     tasks = [asyncio.create_task(_guard(fn.__name__, fn)) for fn in col.tasks()]
+    tasks.append(asyncio.create_task(_guard("auto_update", lambda: auto_update(pub))))
     tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port, lst))))
     if tg and owner:
         from .admin import Admin

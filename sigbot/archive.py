@@ -143,10 +143,12 @@ class Archive:
         return n
 
     async def symbol_all(self, symbol: str, start: date, end: date):
+        # метрики OI лежат по одному файлу в день: за 6 лет это часы загрузки, а движку хватает последних 2 лет
+        m_start = max(start, date.today() - timedelta(days=800))
         r = await asyncio.gather(
             self.klines(symbol, "futures", "1h", start, end),
             self.klines(symbol, "spot", "1h", start, end),
-            self.metrics(symbol, start, end),
+            self.metrics(symbol, m_start, end),
             self.funding(symbol, start, end),
             self.basis(symbol, start, end),
         )
