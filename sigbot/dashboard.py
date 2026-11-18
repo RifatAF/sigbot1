@@ -13,95 +13,195 @@ from . import chart, features, settings
 
 STATIC = Path(__file__).parent / "static"
 
-PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>sigbot</title><script src="static/lightweight-charts.js"></script>
 <style>
 body{margin:0;background:#0d1017;color:#e8ebf1;font:14px -apple-system,Segoe UI,Roboto,sans-serif}
 header{display:flex;gap:10px;align-items:center;padding:12px 16px;flex-wrap:wrap}
-select,button{background:#151a24;color:#e8ebf1;border:1px solid #2b3345;border-radius:8px;padding:7px 12px;font-size:14px}
-button.on{background:#5b8cff;border-color:#5b8cff}.sep{width:1px;height:24px;background:#2b3345}
+select,button{background:#151a24;color:#e8ebf1;border:1px solid #2b3345;border-radius:8px;padding:7px 12px;font-size:14px;cursor:pointer}
+button.on{background:#5b8cff;border-color:#5b8cff}button:disabled{opacity:.35;cursor:default}.sep{width:1px;height:24px;background:#2b3345}
 a{color:#7aa7ff}.muted{color:#8a93a6}
-.legend{display:flex;gap:18px;flex-wrap:wrap;padding:0 16px 8px;font-size:13px;color:#a9b1c2}
-.legend i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-#c{height:64vh;margin:0 16px;border:1px solid #1b2130;border-radius:10px;overflow:hidden}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:16px}
-.card{background:#151a24;border-radius:10px;padding:10px 14px}.card b{display:block;font-size:22px;margin-top:4px}
+#status{margin:0 16px 8px;padding:9px 14px;border-radius:8px;background:#1d2533;color:#ffd27a;display:none}
+.wrap{position:relative;height:62vh;margin:0 16px;border:1px solid #1b2130;border-radius:10px;overflow:hidden}
+#c{position:absolute;inset:0}#ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
+#empty{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;text-align:center;color:#8a93a6;font-size:15px;padding:20px}
+.nav{display:flex;gap:10px;align-items:center;padding:12px 16px 0;flex-wrap:wrap}
+.nav .title{font-size:20px;font-weight:700}.badge{padding:3px 10px;border-radius:6px;font-weight:700;font-size:13px}
+.long{background:#123b2c;color:#3ddc97}.short{background:#3d1820;color:#ff6b6b}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;padding:12px 16px}
+.card{background:#151a24;border-radius:10px;padding:10px 14px;border-left:3px solid #2b3345}.card>span{color:#8a93a6;font-size:12px;text-transform:uppercase}
+.card b{display:block;font-size:19px;margin-top:4px;font-variant-numeric:tabular-nums}
+.c-e{border-color:#5b8cff}.c-s{border-color:#ff6b6b}.c-t{border-color:#3ddc97}
+h3{margin:18px 16px 4px;font-size:15px;color:#a9b1c2}
 table{width:calc(100% - 32px);margin:0 16px 24px;border-collapse:collapse;font-variant-numeric:tabular-nums}
-td,th{padding:7px;border-bottom:1px solid #1b2130;text-align:left}.pos{color:#3ddc97}.neg{color:#ff6b6b}
+td,th{padding:7px;border-bottom:1px solid #1b2130;text-align:left}tbody tr{cursor:pointer}tbody tr:hover,tr.sel{background:#182030}
+.pos{color:#3ddc97}.neg{color:#ff6b6b}
+.legend{display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px 0;font-size:12px;color:#8a93a6}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 </style></head><body>
-<header><b>sigbot</b><a href="overview" id="ov">обзор и бэктест →</a><span class="sep"></span>
+<header><b>sigbot</b><a href="overview" id="ovl">обзор и бэктест портфеля →</a><span class="sep"></span>
 <select id="sym"></select><span class="sep"></span>
 <button id="bLive" class="on">Живые</button><button id="bBt">Бэктест</button><span class="sep"></span>
-<button id="t1h">Час</button><button id="t1d" class="on">День</button>
+<button id="t1h" class="on">Час</button><button id="t1d">День</button>
 <span class="muted" id="note"></span></header>
-<div class="legend">
-<span><i style="background:#5b8cff"></i>вход часового сигнала (▲ лонг, ▼ шорт)</span>
-<span><i style="background:#3ddc97;border-radius:50%"></i>выход в плюс (на часовом графике подписан результат в R)</span>
-<span><i style="background:#ff6b6b;border-radius:50%"></i>выход в минус</span>
-<span><i style="background:rgba(61,220,151,.55)"></i><i style="background:rgba(255,107,107,.55)"></i>полоса внизу: портфель в лонге / в шорте по монете</span>
-</div>
-<div id="c"></div><div class="grid" id="stats"></div>
-<table id="tbl"><thead><tr><th>Монета</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>Результат</th></tr></thead><tbody></tbody></table>
+<div id="status"></div>
+<div class="wrap"><div id="c"></div><canvas id="ov"></canvas><div id="empty"></div></div>
+<div class="legend"><span><i style="background:rgba(61,220,151,.5)"></i>зона цели</span><span><i style="background:rgba(255,107,107,.5)"></i>зона риска</span>
+<span><i style="background:#5b8cff"></i>вход</span><span><i style="background:#3ddc97;border-radius:50%"></i><i style="background:#ff6b6b;border-radius:50%"></i>выход в плюс / минус</span>
+<span><i style="background:rgba(61,220,151,.55)"></i><i style="background:rgba(255,107,107,.55)"></i>полоса внизу: трендовый портфель в лонге / шорте</span></div>
+<div class="nav"><button id="prev">◀</button><span id="cnt" class="muted"></span><button id="next">▶</button>
+<span class="title" id="ttl"></span><span id="bdg"></span><span class="muted" id="when"></span></div>
+<div class="cards" id="det"></div>
+<div class="cards" id="stats"></div>
+<h3 id="th">Сигналы</h3>
+<table id="tbl"><thead><tr><th>Монета</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>Как закрылась</th><th>Результат</th></tr></thead><tbody></tbody></table>
 <script>
-const q = new URLSearchParams(location.search); const tok = q.get('token') ? '&token='+q.get('token') : '';
-let source = 'live', tf = '1d';
-const chart = LightweightCharts.createChart(document.getElementById('c'), {autoSize:true,
+const q = new URLSearchParams(location.search), tok = q.get('token') ? 'token='+q.get('token') : '';
+let source = 'live', tf = '1h', cs = [], times = [], trades = [], all = [], cur = -1, center = 0;
+const $ = id => document.getElementById(id);
+const chart = LightweightCharts.createChart($('c'), {autoSize:true,
   layout:{background:{color:'#0d1017'}, textColor:'#9aa3b5', fontSize:13},
   grid:{vertLines:{visible:false}, horzLines:{color:'#161b26'}},
-  rightPriceScale:{borderVisible:false, scaleMargins:{top:0.05, bottom:0.18}}, timeScale:{borderVisible:false, timeVisible:false},
-  localization:{priceFormatter: p => p < 0 ? '' : p >= 1000 ? p.toFixed(0) : p >= 1 ? p.toFixed(2) : p.toPrecision(4)}});
+  rightPriceScale:{borderVisible:false, scaleMargins:{top:0.08, bottom:0.16}}, timeScale:{borderVisible:false, timeVisible:true, rightOffset:12},
+  localization:{priceFormatter: p => p < 0 ? '' : px(p)}});
 const s = chart.addCandlestickSeries({upColor:'#3ddc97', downColor:'#ff6b6b', borderVisible:false, wickUpColor:'#3ddc97', wickDownColor:'#ff6b6b'});
-const pos = chart.addHistogramSeries({priceScaleId:'pos', priceLineVisible:false, lastValueVisible:false, base:0});
-chart.priceScale('pos').applyOptions({scaleMargins:{top:0.86, bottom:0}, visible:false});
-async function j(u){ const r = await fetch(u + (u.includes('?')?'':'?') + tok); return r.json(); }
-const fmt = t => new Date(t*1000).toISOString().slice(0, tf==='1d' ? 10 : 16).replace('T',' ');
-async function load(){
-  const sym = document.getElementById('sym').value;
-  const cs = await j('api/candles?symbol='+sym+'&tf='+tf);
-  s.setData(cs);
-  const step = tf==='1d' ? 86400 : 3600, snap = t => Math.floor(t/step)*step;
-  // полоса позиции портфеля: из точек смены стороны в столбик на каждой свече
+s.applyOptions({autoscaleInfoProvider: orig => { const r = orig(), t = trades[cur]; if (!r || !t || t.entry==null) return r;
+  return {priceRange:{minValue: Math.min(r.priceRange.minValue, t.stop, t.tp2), maxValue: Math.max(r.priceRange.maxValue, t.stop, t.tp2)}}; }});
+const band = chart.addHistogramSeries({priceScaleId:'pos', priceLineVisible:false, lastValueVisible:false, base:0});
+chart.priceScale('pos').applyOptions({scaleMargins:{top:0.9, bottom:0}, visible:false});
+function px(p){ return p >= 1000 ? p.toLocaleString('en-US',{maximumFractionDigits:0}) : p >= 1 ? p.toFixed(p>=100?2:3) : p.toPrecision(4); }
+async function j(u){ const r = await fetch(u + (u.includes('?')?'&':'?') + tok); return r.json(); }
+const fmt = t => new Date(t*1000).toISOString().slice(0,16).replace('T',' ');
+const step = () => tf==='1d' ? 86400 : 3600;
+const EXIT = {tp2:'цель 2', tp1:'цель 1', stop:'стоп', breakeven_stop:'безубыток после цели 1', timeout:'по времени', trail_stop:'трейлинг стоп'};
+// --- рисование зон сигналов поверх графика
+const cv = $('ov'), g = cv.getContext('2d');
+function xOf(t){ if (!times.length) return null; let lo=0, hi=times.length; const tt = Math.floor(t/step())*step();
+  while (lo<hi){ const m=(lo+hi)>>1; if (times[m]<tt) lo=m+1; else hi=m; }
+  if (lo>=times.length) lo = times.length-1 + (tt-times[times.length-1])/step();
+  return chart.timeScale().logicalToCoordinate(lo); }
+function chip(x, y, text, bg){ g.font='600 12px -apple-system,Segoe UI,Roboto,sans-serif'; const w=g.measureText(text).width+12;
+  g.fillStyle=bg; g.beginPath(); g.roundRect ? g.roundRect(x, y-10, w, 20, 4) : g.rect(x, y-10, w, 20); g.fill();
+  g.fillStyle='#0d1017'; g.fillText(text, x+6, y+4); }
+function draw(){
+  const W = chart.timeScale().width(), H = $('c').clientHeight - 28, dpr = devicePixelRatio || 1;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.width = W+'px'; cv.style.height = H+'px'; g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  trades.forEach((t, i) => {
+    if (t.entry == null) return;
+    const sel = i === cur, x1 = xOf(t.entry_time), last = times[times.length-1] || t.entry_time;
+    let x2 = xOf(t.exit_time || last); if (x1==null || x2==null) return; x2 = Math.max(x2, x1 + 6);
+    if (x2 < 0 || x1 > W) return;
+    const y = p => s.priceToCoordinate(p), ye = y(t.entry), ys = y(t.stop), y1 = y(t.tp1), y2 = y(t.tp2);
+    if ([ye,ys,y1,y2].some(v => v==null)) return;
+    const a = sel ? 1 : .45;
+    g.fillStyle = `rgba(61,220,151,${.16*a})`; g.fillRect(x1, Math.min(ye,y2), x2-x1, Math.abs(y2-ye));
+    g.fillStyle = `rgba(255,107,107,${.2*a})`; g.fillRect(x1, Math.min(ye,ys), x2-x1, Math.abs(ys-ye));
+    const line = (yy, c, dash) => { g.strokeStyle=c; g.globalAlpha=a; g.setLineDash(dash||[]); g.lineWidth=1.3;
+      g.beginPath(); g.moveTo(x1, yy); g.lineTo(x2, yy); g.stroke(); g.setLineDash([]); g.globalAlpha=1; };
+    line(y2,'#3ddc97'); line(y1,'#3ddc97',[3,3]); line(ye,'#5b8cff'); line(ys,'#ff6b6b');
+    if (sel) { const lx = Math.min(x2 + 6, W - 120);
+      chip(lx, y2, 'TP2 '+px(t.tp2), '#3ddc97'); chip(lx, y1, 'TP1 '+px(t.tp1), '#3ddc97');
+      chip(lx, ye, 'Вход '+px(t.entry), '#7aa7ff'); chip(lx, ys, 'Стоп '+px(t.stop), '#ff6b6b'); }
+  });
+}
+const redraw = () => requestAnimationFrame(draw);
+chart.timeScale().subscribeVisibleLogicalRangeChange(redraw); chart.timeScale().subscribeSizeChange(redraw);
+chart.subscribeCrosshairMove(redraw); new ResizeObserver(redraw).observe($('c'));
+// --- данные
+async function loadCandles(sym){
+  cs = await j('api/candles?symbol='+sym+'&tf='+tf+(tf==='1h' && center ? '&center='+center : ''));
+  cs = cs.filter(c => c.open!=null && c.close!=null); times = cs.map(c => c.time); s.setData(cs);
   const marks = (await j('api/marks?symbol='+sym+'&source='+source)).sort((a,b)=>a.time-b.time);
-  let k = 0, side = 0; const bars = [];
-  for (const c of cs) { while (k < marks.length && marks[k].time <= c.time) side = marks[k++].side;
-    bars.push({time:c.time, value: side===0 ? 0 : 1,
-    color: side>0 ? 'rgba(61,220,151,.55)' : side<0 ? 'rgba(255,107,107,.55)' : 'rgba(0,0,0,0)'}); }
-  pos.setData(bars);
-  const tr = await j('api/trades?source='+source+'&symbol='+sym), m = [];
-  for (const t of tr) {
-    const long = t.side === 'long';
-    m.push({time:snap(t.entry_time), position: long?'belowBar':'aboveBar', color:'#5b8cff', shape: long?'arrowUp':'arrowDown', size:1});
-    if (t.exit_time && t.r != null) m.push({time:snap(t.exit_time), position: long?'aboveBar':'belowBar',
-      color: t.r>0?'#3ddc97':'#ff6b6b', shape:'circle', size:1, text: tf==='1h' ? (t.r>0?'+':'')+t.r.toFixed(1)+'R' : ''});
-  }
-  m.sort((a,b)=>a.time-b.time); s.setMarkers(m);
-  if (tf==='1h') chart.timeScale().setVisibleLogicalRange({from: cs.length-240, to: cs.length+5}); else chart.timeScale().fitContent();
-  document.querySelector('#tbl tbody').innerHTML = tr.slice().reverse().slice(0,40).map(t =>
-    `<tr><td>${t.symbol.replace('USDT','')}</td><td class="${t.side==='long'?'pos':'neg'}">${t.side==='long'?'лонг':'шорт'}</td><td>${fmt(t.entry_time)}</td><td>${t.exit_time?fmt(t.exit_time):'открыта'}</td><td class="${t.r>0?'pos':t.r<0?'neg':''}">${t.r==null?'':(t.r>0?'+':'')+t.r.toFixed(2)+'R'}</td></tr>`).join('') ||
-    '<tr><td colspan=5 class="muted">по этой монете часовых сигналов нет</td></tr>';
+  let k = 0, side = 0; band.setData(cs.map(c => { while (k < marks.length && marks[k].time <= c.time) side = marks[k++].side;
+    return {time:c.time, value: side===0 ? 0 : 1, color: side>0 ? 'rgba(61,220,151,.55)' : side<0 ? 'rgba(255,107,107,.55)' : 'rgba(0,0,0,0)'}; }));
+  const m = [];
+  for (const t of trades) { const long = t.side==='long', sn = x => Math.floor(x/step())*step();
+    m.push({time:sn(t.entry_time), position: long?'belowBar':'aboveBar', color:'#5b8cff', shape: long?'arrowUp':'arrowDown', size:1});
+    if (t.exit_time && t.r != null) m.push({time:sn(t.exit_time), position: long?'aboveBar':'belowBar', color: t.r>0?'#3ddc97':'#ff6b6b',
+      shape:'circle', size:1, text: tf==='1h' ? (t.r>0?'+':'')+t.r.toFixed(1)+'R' : ''}); }
+  s.setMarkers(m.filter(x => x.time >= (times[0]||0) && x.time <= (times[times.length-1]||0)).sort((a,b)=>a.time-b.time));
+  const e = $('empty');
+  if (!cs.length) { e.style.display='flex'; e.textContent='По этой монете ещё нет часовых свечей: бот докачивает историю, обнови страницу через пару минут.'; }
+  else e.style.display='none';
+}
+function focus(i){
+  if (!trades.length) { cur=-1; renderDet(); redraw(); return; }
+  cur = Math.max(0, Math.min(trades.length-1, i)); const t = trades[cur];
+  const span = Math.max((t.exit_time || t.entry_time) - t.entry_time, step()*10);
+  const lo = xIdx(t.entry_time - span*1.5), hi = xIdx((t.exit_time||t.entry_time) + span*1.2);
+  if (lo!=null && hi!=null) chart.timeScale().setVisibleLogicalRange({from: lo, to: Math.max(hi, lo+30)});
+  renderDet(); renderTable(); redraw();
+}
+function xIdx(t){ if (!times.length) return null; let lo=0, hi=times.length; while(lo<hi){const m=(lo+hi)>>1; if(times[m]<t) lo=m+1; else hi=m;} return lo; }
+async function go(i){
+  const t = trades[i]; if (!t) return focus(i);
+  if (tf==='1h' && (!times.length || t.entry_time < times[0] || (t.exit_time||t.entry_time) > times[times.length-1])) {
+    center = t.entry_time; await loadCandles($('sym').value); }
+  focus(i);
+}
+function renderDet(){
+  const t = trades[cur];
+  $('cnt').textContent = trades.length ? `сигнал ${cur+1} из ${trades.length}` : 'по этой монете сигналов нет';
+  $('prev').disabled = cur <= 0; $('next').disabled = cur >= trades.length-1;
+  if (!t) { $('ttl').textContent=''; $('bdg').innerHTML=''; $('when').textContent=''; $('det').innerHTML=''; return; }
+  $('ttl').textContent = t.symbol.replace('USDT','');
+  $('bdg').innerHTML = `<span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>`;
+  $('when').textContent = 'вход ' + fmt(t.entry_time) + ' UTC' + (t.exit_time ? ', выход ' + fmt(t.exit_time) : ', сделка открыта');
+  const res = t.r==null ? 'открыта' : (t.r>0?'+':'')+t.r.toFixed(2)+'R' + (t.pnl_pct!=null ? ` (${t.pnl_pct>0?'+':''}${t.pnl_pct.toFixed(2)}%)` : '');
+  const c = [['Вход',px(t.entry),'c-e'],['Стоп',px(t.stop),'c-s'],['TP1',px(t.tp1),'c-t'],['TP2',px(t.tp2),'c-t'],
+    ['Риск', t.risk_pct!=null ? t.risk_pct.toFixed(2)+'%' : '', ''],['Плечо', t.leverage!=null ? 'x'+t.leverage.toFixed(1) : '', ''],
+    ['Итог', `<span class="${t.r>0?'pos':t.r<0?'neg':''}">${res}</span>`, ''],['Закрыта', EXIT[t.exit_event] || (t.exit_time?'':'—'), '']];
+  $('det').innerHTML = c.filter(x=>x[1]!=='').map(([k,v,cl]) => `<div class="card ${cl}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+function renderTable(){
+  $('th').textContent = (source==='live' ? 'Живые сигналы' : 'Сигналы бэктеста') + ' по монете';
+  $('tbl').querySelector('tbody').innerHTML = trades.map((t,i) => [t,i]).reverse().map(([t,i]) =>
+    `<tr data-i="${i}" class="${i===cur?'sel':''}"><td>${t.symbol.replace('USDT','')}</td><td class="${t.side==='long'?'pos':'neg'}">${t.side==='long'?'лонг':'шорт'}</td><td>${fmt(t.entry_time)}</td><td>${t.exit_time?fmt(t.exit_time):'открыта'}</td><td>${EXIT[t.exit_event]||''}</td><td class="${t.r>0?'pos':t.r<0?'neg':''}">${t.r==null?'':(t.r>0?'+':'')+t.r.toFixed(2)+'R'}</td></tr>`).join('') ||
+    '<tr><td colspan=6 class="muted">по этой монете сигналов нет, выбери монету с числом в списке</td></tr>';
+  document.querySelectorAll('#tbl tbody tr[data-i]').forEach(r => r.onclick = () => { go(+r.dataset.i); window.scrollTo({top:0, behavior:'smooth'}); });
+}
+async function fillSymbols(){
+  const sel = $('sym'), keep = sel.value || q.get('symbol');
+  const syms = await j('api/symbols'); all = await j('api/trades?source='+source);
+  const n = {}; all.forEach(t => n[t.symbol] = (n[t.symbol]||0)+1);
+  const list = [...new Set([...syms, ...Object.keys(n)])].sort((a,b) => (n[b]||0)-(n[a]||0));
+  sel.innerHTML = list.map(x => `<option value="${x}">${x.replace('USDT','')}${n[x] ? ' · '+n[x] : ''}</option>`).join('');
+  if (keep && list.includes(keep)) sel.value = keep;
+}
+async function load(){
+  const sym = $('sym').value; center = 0; s.applyOptions({priceLineVisible: source==='live'});
+  trades = all.filter(t => t.symbol === sym).sort((a,b) => a.entry_time-b.entry_time);
+  await loadCandles(sym);
+  if (trades.length) await go(trades.length-1);
+  else { cur=-1; if (tf==='1h') chart.timeScale().setVisibleLogicalRange({from: cs.length-240, to: cs.length+12}); else chart.timeScale().fitContent(); renderDet(); renderTable(); redraw(); }
   const st = await j('api/stats?source='+source);
   const names = {signals:'сигналов', open:'открыто', closed:'закрыто', 'win %':'прибыльных, %', 'sum R':'сумма R', mode:'режим',
-    version:'версия', trades:'сделок', 'return %':'доходность, %', 'buy&hold %':'buy and hold, %', 'max DD %':'просадка, %',
+    version:'версия', trades:'сделок (все монеты)', 'return %':'доходность, %', 'buy&hold %':'buy and hold, %', 'max DD %':'просадка, %',
     'profit factor':'profit factor', 'beats B&H and cash':'лучше рынка и кэша', backtest:'бэктест'};
-  document.getElementById('stats').innerHTML = Object.entries(st).map(([k,v]) =>
-    `<div class="card"><span class="muted">${names[k]||k}</span><b>${v==='yes'?'да':v==='no'?'нет':v}</b></div>`).join('');
-  document.getElementById('note').textContent = source==='live' ? 'Живая работа: то, что ушло в канал' :
-    'Бэктест часовых сигналов и трендового портфеля, в канал не публикуется';
+  $('stats').innerHTML = Object.entries(st).map(([k,v]) =>
+    `<div class="card"><span>${names[k]||k}</span><b>${v==='yes'?'да':v==='no'?'нет':v}</b></div>`).join('');
+  $('note').textContent = source==='live' ? 'Живая работа: то, что ушло в канал' : 'Бэктест часовых сигналов, в канал не публикуется';
 }
-const toggle = (a, b, on) => { document.getElementById(a).classList.toggle('on', on); document.getElementById(b).classList.toggle('on', !on); };
-document.getElementById('t1h').onclick = () => { tf='1h'; toggle('t1h','t1d',true); chart.applyOptions({timeScale:{timeVisible:true}}); load(); };
-document.getElementById('t1d').onclick = () => { tf='1d'; toggle('t1h','t1d',false); chart.applyOptions({timeScale:{timeVisible:false}}); load(); };
-document.getElementById('bLive').onclick = () => { source='live'; toggle('bLive','bBt',true); load(); };
-document.getElementById('bBt').onclick = () => { source='backtest'; toggle('bLive','bBt',false); load(); };
-(async () => { const syms = await j('api/symbols'); const sel = document.getElementById('sym');
-  sel.innerHTML = syms.map(x=>`<option value="${x}">${x.replace('USDT','')}</option>`).join(''); if (q.get('symbol')) sel.value = q.get('symbol');
-  document.getElementById('ov').href = 'overview' + (q.get('token') ? '?token='+q.get('token') : '');
-  sel.onchange = load; load(); })();
-</script></body></html>"""
+async function poll(){ try { const st = await j('api/status'); const b = $('status');
+  b.style.display = st.state==='work' || st.state==='fail' ? 'block' : 'none'; b.textContent = (st.state==='work'?'⏳ ':'⚠️ ') + st.text;
+  if (st.state==='ok' && poll.was==='work') { await fillSymbols(); load(); } poll.was = st.state; } catch(e){} setTimeout(poll, 5000); }
+const toggle = (a, b, on) => { $(a).classList.toggle('on', on); $(b).classList.toggle('on', !on); };
+$('t1h').onclick = () => { tf='1h'; toggle('t1h','t1d',true); chart.applyOptions({timeScale:{timeVisible:true}}); load(); };
+$('t1d').onclick = () => { tf='1d'; toggle('t1h','t1d',false); chart.applyOptions({timeScale:{timeVisible:false}}); load(); };
+$('bLive').onclick = async () => { source='live'; toggle('bLive','bBt',true); await fillSymbols(); load(); };
+$('bBt').onclick = async () => { source='backtest'; toggle('bLive','bBt',false); await fillSymbols(); load(); };
+$('prev').onclick = () => go(cur-1); $('next').onclick = () => go(cur+1);
+document.addEventListener('keydown', e => { if (e.key==='ArrowLeft') go(cur-1); if (e.key==='ArrowRight') go(cur+1); });
+$('sym').onchange = load;
+(async () => { $('ovl').href = 'overview' + (tok ? '?'+tok : '');
+  if (q.get('source')==='backtest') { source='backtest'; toggle('bLive','bBt',false); }
+  await fillSymbols(); load(); poll(); })();
+</script></body></html>
+"""
 
 
 def latest_backtest() -> dict | None:
-    files = sorted(glob.glob("reports/backtest_*.json"))
+    files = sorted(glob.glob("reports/backtest_*.json"), key=os.path.getmtime)
     return json.loads(Path(files[-1]).read_text()) if files else None
 
 
@@ -133,13 +233,19 @@ def make_app(cfg, conn) -> web.Application:
                 out[d] = [o, h, lo, c] if x is None else [x[0], max(x[1], h), min(x[2], lo), c]
             return web.json_response([{"time": d, "open": v[0], "high": v[1], "low": v[2], "close": v[3]}
                                       for d, v in out.items()])
-        rows = conn.execute("SELECT ts, open, high, low, close FROM candles WHERE symbol=? AND market='futures' "
-                            "AND tf='1h' ORDER BY ts DESC LIMIT 2000", (sym,)).fetchall()
+        c = int(request.query.get("center") or 0) * 1000     # окно вокруг выбранного сигнала, иначе последние бары
+        if c:
+            rows = conn.execute("SELECT ts, open, high, low, close FROM candles WHERE symbol=? AND market='futures' "
+                                "AND tf='1h' AND ts BETWEEN ? AND ? ORDER BY ts",
+                                (sym, c - 1200 * 3_600_000, c + 800 * 3_600_000)).fetchall()
+        else:
+            rows = conn.execute("SELECT ts, open, high, low, close FROM candles WHERE symbol=? AND market='futures' "
+                                "AND tf='1h' ORDER BY ts DESC LIMIT 2000", (sym,)).fetchall()[::-1]
         return web.json_response([{"time": r[0] // 1000, "open": r[1], "high": r[2], "low": r[3], "close": r[4]}
-                                  for r in reversed(rows)])
+                                  for r in rows])
 
     def live_trades(sym=None):
-        q = ("SELECT s.id, s.symbol, s.side, s.ts, s.risk_pct, t.status, "
+        q = ("SELECT s.id, s.symbol, s.side, s.ts, s.risk_pct, s.leverage, s.entry, s.stop, s.tp1, s.tp2, t.status, "
              "(SELECT MAX(ts) FROM outcomes WHERE signal_id=s.id AND closed_fraction>0) AS exit_ts, "
              "(SELECT SUM(pnl_r) FROM outcomes WHERE signal_id=s.id) AS r "
              "FROM signals s LEFT JOIN trade_state t ON t.signal_id=s.id WHERE s.source='live'")
@@ -152,15 +258,21 @@ def make_app(cfg, conn) -> web.Application:
             closed = r["status"] == "closed"
             out.append({"id": r["id"], "symbol": r["symbol"], "side": r["side"], "entry_time": (r["ts"] - 3_600_000) // 1000,
                         "exit_time": r["exit_ts"] // 1000 // 3600 * 3600 if closed and r["exit_ts"] else None,
-                        "r": round(r["r"], 2) if closed and r["r"] is not None else None, "risk_pct": r["risk_pct"]})
+                        "r": round(r["r"], 2) if closed and r["r"] is not None else None, "risk_pct": r["risk_pct"],
+                        "leverage": r["leverage"], **{k: r[k] for k in ("entry", "stop", "tp1", "tp2")},
+                        "exits": [[e[0] // 1000 // 3600 * 3600, e[1]] for e in conn.execute(
+                            "SELECT ts, event FROM outcomes WHERE signal_id=? AND closed_fraction>0 ORDER BY ts", (r["id"],))],
+                        "exit_event": None})
         return out
 
     def bt_trades(sym=None):
         rep = latest_backtest()
         if not rep:
             return []
-        return [{"symbol": t["symbol"], "side": t["side"], "entry_time": t["entry_ts"] // 1000,
-                 "exit_time": t["exit_ts"] // 1000, "r": t["r"], "pnl_pct": t["pnl_pct"]}
+        return [{"symbol": t["symbol"], "side": t["side"], "entry_time": t["entry_ts"] // 1000 - 3600,
+                 "exit_time": t["exit_ts"] // 1000, "r": t["r"], "pnl_pct": t["pnl_pct"],
+                 **{k: t[k] for k in ("entry", "stop", "tp1", "tp2", "risk_pct", "leverage", "strength", "exit_event")},
+                 "exits": [[e[0] // 1000, e[1]] for e in t.get("exits", [])]}
                 for t in rep["trades"] if not sym or t["symbol"] == sym]
 
     async def trades(request):
@@ -172,7 +284,8 @@ def make_app(cfg, conn) -> web.Application:
         if request.query.get("source") == "backtest":
             rep = latest_backtest()
             if not rep:
-                return web.json_response({"backtest": "none yet"})
+                from . import autoprep
+                return web.json_response({"backtest": autoprep.STATUS.get("text") or "ещё не посчитан"})
             t, b = rep["total"], rep["benchmarks"]
             return web.json_response({"version": rep["params_version"], "trades": t["trades"],
                                       "return %": t["return_pct"], "buy&hold %": b["equal_weight_pct"],
@@ -244,6 +357,10 @@ def make_app(cfg, conn) -> web.Application:
                 prev = sd
         return web.json_response(out)
 
+    async def status(_):
+        from . import autoprep
+        return web.json_response(autoprep.STATUS)
+
     async def health(_):
         rows = conn.execute("SELECT component, status, detail, MAX(ts) AS ts FROM health GROUP BY component").fetchall()
         return web.json_response({r["component"]: {"status": r["status"], **json.loads(r["detail"])} for r in rows})
@@ -255,6 +372,7 @@ def make_app(cfg, conn) -> web.Application:
     app.router.add_get("/api/trades", trades)
     app.router.add_get("/api/stats", stats)
     app.router.add_get("/api/health", health)
+    app.router.add_get("/api/status", status)
     app.router.add_get("/overview", overview_page)
     app.router.add_get("/api/overview", overview_api)
     app.router.add_get("/api/live", live_api)

@@ -163,6 +163,8 @@ async def run(cfg, conn):
         tasks.append(asyncio.create_task(_guard("leader", leader.loop)))
         await pub.notify_owner(f"sigbot started on {leader.name} as main. /menu for settings.")
     tasks.append(asyncio.create_task(_guard("heartbeat", lambda: heartbeat(conn, leader))))
+    from . import autoprep
+    asyncio.create_task(autoprep.run(cfg, conn, http))
     say("✅ Сборщик, сканер, портфель, листинги и админка работают.")
     say("Бот не завершается сам: это служба. Раз в 5 минут здесь строка «работаю». Остановить: Ctrl+C или Shift+F5.\n")
     try:
