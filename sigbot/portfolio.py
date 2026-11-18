@@ -205,11 +205,57 @@ class LivePortfolio:
                               [(day, s, w) for s, w in new.items()])
         self.conn.execute("INSERT OR REPLACE INTO portfolio_equity VALUES (?,?,?,?)",
                           (day, eq, pnl * 100, sum(abs(w) for w in new.values())))
-        opened = [s for s in new if s not in prev or np.sign(new[s]) != np.sign(prev[s])]
-        closed = [s for s in prev if s not in new]
-        weekly = datetime.fromtimestamp(day / 1000, timezone.utc).weekday() == 6
-        if not prev or opened or closed or weekly:
-            text, nums = templates.portfolio(new, opened, closed, (eq - 1) * 100, pnl * 100, pc,
-                                             self.cfg["publishing"]["mode"], full=weekly or not prev)
-            return await self.pub.publish("portfolio", text, nums)
-        return None
+        return await self.signals(day, C, new, first=not prev)
+
+    async def signals(self, day: int, C: pd.DataFrame, new: dict, first: bool = False) -> str | None:
+        """Сигналы ленты: позиция от signal_min_weight открывается постом с уровнем выхода, закрывается постом,
+        когда портфель убрал монету или развернул её. Раз в неделю список открытых с новыми уровнями."""
+        from . import feed, templates
+        day = int(day)
+        pc, mode = self.cfg["portfolio"], self.cfg["publishing"]["mode"]
+        thr, fee = pc.get("signal_min_weight", 0.1), self.cfg["trade"]["fee_taker_pct"]
+        last = C.loc[day]
+        sent = None
+        st = None
+        if feed.FEED.exists():
+            import json
+            st = json.loads(feed.FEED.read_text()).get("summary", {}).get("trend")
+        for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open'").fetchall():
+            w = new.get(r["symbol"], 0)
+            px = float(last.get(r["symbol"], np.nan))
+            if np.isnan(px):
+                continue
+            sd = 1 if r["side"] == "long" else -1
+            if np.sign(w) == sd:
+                lv = feed.exit_level(C[r["symbol"]].loc[:day].values, sd, pc)
+                self.conn.execute("UPDATE trend_signals SET exit_level=? WHERE id=?", (lv, r["id"]))
+                continue
+            move = (px / r["entry"] - 1) * 100 * sd
+            res = r["size_pct"] * (move - 2 * fee) / 100
+            self.conn.execute("UPDATE trend_signals SET status='closed', close_day=?, exit_price=?, move_pct=?, result_pct=? "
+                              "WHERE id=?", (day, px, move, res, r["id"]))
+            text, nums = templates.trend_exit(r["symbol"], r["side"], r["entry"], px, move, res,
+                                              int((day - r["open_day"]) / DAY), mode)
+            sent = await self.pub.publish("trend_exit", text, nums) or sent
+        open_syms = {r[0] for r in self.conn.execute("SELECT symbol FROM trend_signals WHERE status='open'")}
+        for sym, w in sorted(new.items(), key=lambda x: -abs(x[1])):
+            if abs(w) < thr or sym in open_syms:
+                continue
+            prev_w = self.conn.execute("SELECT weight FROM portfolio_weights WHERE symbol=? AND day=?",
+                                       (sym, day - DAY)).fetchone()
+            if prev_w and np.sign(prev_w[0]) == np.sign(w):        # позиция уже была до этого дня: не новый сигнал
+                continue
+            sd = 1 if w > 0 else -1
+            px = float(last[sym])
+            lv = feed.exit_level(C[sym].loc[:day].values, sd, pc)
+            self.conn.execute("INSERT INTO trend_signals (symbol, side, open_day, entry, size_pct, exit_level) VALUES (?,?,?,?,?,?)",
+                              (sym, "long" if sd > 0 else "short", day, px, round(abs(w) * 100, 1), lv))
+            if not first:                       # первый запуск: не заваливаем канал, ниже одним списком
+                text, nums = templates.trend_signal(sym, "long" if sd > 0 else "short", px, abs(w) * 100, lv, mode, st)
+                sent = await self.pub.publish("trend_signal", text, nums) or sent
+        if first or datetime.fromtimestamp(day / 1000, timezone.utc).weekday() == 6:
+            rows = [dict(r) for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open' ORDER BY size_pct DESC")]
+            text, nums = templates.trend_open_list(rows, mode)
+            sent = await self.pub.publish("trend_list", text, nums) or sent
+        return sent
+

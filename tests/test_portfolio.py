@@ -54,8 +54,8 @@ async def test_live_portfolio_daily(cfg, conn, tg):
     conn.executemany("INSERT INTO candles VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
     lp = portfolio.LivePortfolio(cfg, conn, Publisher(cfg, conn, tg, -100, 7))
     last = int(C.index[-1])
-    assert await lp.run_daily(last, list(C)) == "sent"                  # первый пост: полный состав
-    assert "Trend portfolio" in tg.sent[-1][1]
+    assert await lp.run_daily(last, list(C)) == "sent"                  # первый пост: список открытых сигналов
+    assert "Open trend signals" in tg.sent[-1][1]
     assert await lp.run_daily(last, list(C)) is None                    # тот же день второй раз не считается
     assert await lp.run_daily(last + DAY, list(C)) in (None, "sent")
     assert conn.execute("SELECT COUNT(*) FROM portfolio_equity").fetchone()[0] == 2

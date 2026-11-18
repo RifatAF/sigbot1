@@ -74,7 +74,7 @@ def load(refresh: bool = False) -> dict:
     return json.loads(CACHE.read_text())
 
 
-def backtest(D: dict, lc: dict, fee_pct: float, start_ms: int, end_ms: int) -> tuple[pd.Series, list[dict]]:
+def backtest(D: dict, lc: dict, fee_pct: float, start_ms: int, end_ms: int, exclude=()) -> tuple[pd.Series, list[dict]]:
     """Дневной результат портфеля шортов (доля капитала) и список сделок."""
     days = np.arange(start_ms // DAY * DAY, end_ms, DAY)
     pnl = pd.Series(0.0, index=days)
@@ -82,7 +82,7 @@ def backtest(D: dict, lc: dict, fee_pct: float, start_ms: int, end_ms: int) -> t
     n = lc["notional_pct"] / 100
     stop_k = 1 + lc["stop_pct"] / 100
     for s, v in D.items():
-        if len(v) < 3 or s in ("BTCUSDT", "ETHUSDT"):
+        if len(v) < 3 or s in ("BTCUSDT", "ETHUSDT") or s in exclude:
             continue
         a = np.array(v)
         t, o, h, c = a[:, 0].astype(np.int64), a[:, 1], a[:, 2], a[:, 4]

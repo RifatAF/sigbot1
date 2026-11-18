@@ -13,7 +13,214 @@ from . import chart, features, settings
 
 STATIC = Path(__file__).parent / "static"
 
-PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+PAGE = r"""<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>sigbot</title><script src="static/lightweight-charts.js"></script>
+<style>
+:root{--bg:#0d1017;--card:#151a24;--line:#232b3a;--txt:#e8ebf1;--mut:#8a93a6;--g:#3ddc97;--r:#ff6b6b;--b:#5b8cff;--y:#ffd27a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:14px -apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:12px 16px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+header b{font-size:16px}a{color:#7aa7ff}.mut{color:var(--mut)}.pos{color:var(--g)}.neg{color:var(--r)}
+button,input{background:var(--card);color:var(--txt);border:1px solid #2b3345;border-radius:8px;padding:7px 12px;font-size:14px}
+button{cursor:pointer}button:disabled{opacity:.35;cursor:default}
+.seg{display:inline-flex;background:var(--card);border:1px solid #2b3345;border-radius:9px;padding:2px}
+.seg button{border:0;background:none;padding:6px 12px;border-radius:7px}.seg button.on{background:var(--b)}
+#status{margin:10px 16px 0;padding:10px 14px;border-radius:8px;background:var(--card);display:none}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:8px 0 2px}.bar i{display:block;height:100%;background:var(--b);transition:width .6s}
+.st-ok .bar i{background:var(--g)}.warn{color:var(--y);font-size:13px;margin-top:6px}
+.how{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;padding:12px 16px 0}
+.how div{background:var(--card);border-radius:10px;padding:10px 14px;font-size:13px;color:#a9b1c2;line-height:1.45;cursor:pointer;border:1px solid transparent}
+.how div.on{border-color:var(--b)}.how b{color:var(--txt);font-size:14px}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;padding:12px 16px}
+.kpi div{background:var(--card);border-radius:10px;padding:10px 14px}.kpi span{color:var(--mut);font-size:12px}.kpi b{display:block;font-size:20px;margin-top:3px}
+main{display:grid;grid-template-columns:minmax(330px,40%) 1fr;gap:14px;padding:0 16px 24px}
+@media(max-width:900px){main{grid-template-columns:1fr}#detail{order:-1}}
+.panel{background:var(--card);border-radius:12px;padding:12px;min-width:0}
+.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}.tools #q{width:120px}
+input[type=checkbox]{width:auto;padding:0;accent-color:var(--b)}
+label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center;cursor:pointer}
+#list{max-height:calc(100vh - 150px);overflow:auto}
+.row{display:grid;grid-template-columns:86px 1fr auto;gap:8px;align-items:center;padding:9px 8px;border-radius:8px;cursor:pointer;border-bottom:1px solid var(--line)}
+.row:hover{background:#1b2230}.row.sel{background:#1e2a44}
+.row .d{color:var(--mut);font-size:12px;line-height:1.3}.row .c{font-weight:600}.row .t{color:var(--mut);font-size:12px;font-weight:400}
+.res{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}.res small{display:block;color:var(--mut);font-weight:400;font-size:11px}
+.badge{padding:2px 8px;border-radius:5px;font-weight:700;font-size:12px;margin-left:6px}.long{background:#123b2c;color:var(--g)}.short{background:#3d1820;color:var(--r)}
+.pill{background:#2a3550;color:#a8c1ff;border-radius:5px;padding:1px 7px;font-size:11px;margin-left:6px}
+.more{width:100%;margin-top:8px}
+#dhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}#dhead .ttl{font-size:20px;font-weight:700}
+.wrap{position:relative;height:430px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#c{position:absolute;inset:0}#ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
+#empty{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;text-align:center;color:var(--mut);padding:20px;background:var(--bg)}
+.story{margin:10px 0;padding:10px 14px;border-radius:8px;background:#11161f;line-height:1.55;color:#c7cdd8}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.cards div{background:#11161f;border-radius:8px;padding:8px 12px;border-left:3px solid #2b3345}.cards span{color:var(--mut);font-size:11px;text-transform:uppercase}
+.cards b{display:block;font-size:17px;margin-top:3px;font-variant-numeric:tabular-nums}
+.ce{border-color:var(--b)!important}.cs{border-color:var(--r)!important}.ct{border-color:var(--g)!important}
+.nav{display:flex;gap:8px;align-items:center;margin-left:auto}
+</style></head><body>
+<header><b>sigbot</b>
+<span class="seg"><button data-src="live">Живые</button><button data-src="backtest">История (бэктест)</button></span>
+<span class="mut" id="sub"></span><span style="flex:1"></span><a href="overview" id="ovl">сводный отчёт →</a></header>
+<div id="status"></div>
+<div class="how" id="how">
+<div data-k="trend"><b>🧭 Тренд</b> · основная прибыль, около 1 сигнала в день. Вход на дневном закрытии, держим, пока тренд жив. Цели нет, выход при закрытии дня за «уровнем выхода».</div>
+<div data-k="capitulation"><b>⚡ Капитуляция</b> · редкий часовой сигнал после сильного слива с падением открытого интереса. Есть стоп и две цели.</div>
+<div data-k="listing"><b>🆕 Шорт листинга</b> · шорт новых монет на фьючерсах, если первый день слабый. Держим до 60 дней, широкий стоп +50%.</div>
+</div>
+<div class="kpi" id="kpi"></div>
+<main>
+<section class="panel">
+<div class="tools"><span class="seg" id="kinds"><button data-k="all">Все</button><button data-k="trend">🧭</button><button data-k="capitulation">⚡</button><button data-k="listing">🆕</button></span>
+<input id="q" placeholder="монета"><label><input type="checkbox" id="onlyOpen">только открытые</label></div>
+<div id="list"></div></section>
+<section class="panel" id="detail">
+<div id="dhead"><span class="ttl" id="ttl">Выбери сигнал слева</span><span id="bdg"></span><span class="mut" id="kindname"></span>
+<span class="nav"><button id="prev" title="Предыдущий (←)">◀</button><button id="next" title="Следующий (→)">▶</button></span></div>
+<div class="wrap"><div id="c"></div><canvas id="ov"></canvas><div id="empty"></div></div>
+<div class="story" id="story"></div><div class="cards" id="cards"></div>
+</section></main>
+<script>
+const q = new URLSearchParams(location.search), tok = q.get('token') ? 'token='+q.get('token') : '';
+const S = {source: q.get('source') || 'live', kind: 'all', open: false, text: ''};
+let F = {items: [], summary: {}}, view = [], cur = null, shown = 150, cs = [], times = [], tf = '1d', ST = {};
+const $ = id => document.getElementById(id), G = '#3ddc97', R = '#ff6b6b', B = '#5b8cff';
+const KIND = {trend: '🧭 Тренд', capitulation: '⚡ Капитуляция', listing: '🆕 Шорт листинга'};
+const px = p => p == null ? '—' : p >= 1000 ? p.toLocaleString('en-US',{maximumFractionDigits:0}) : p >= 1 ? p.toFixed(p>=100?2:3) : p.toPrecision(4);
+const sg = (v, d=1) => v == null || isNaN(v) ? '—' : (v>0?'+':'') + v.toFixed(d) + '%';
+const day = t => new Date(t*1000).toISOString().slice(0,10), dt = t => new Date(t*1000).toISOString().slice(0,16).replace('T',' ');
+const coin = s => s.replace('USDT','');
+async function j(u){ const r = await fetch(u + (u.includes('?')?'&':'?') + tok); return r.json(); }
+// ---------- график
+const chart = LightweightCharts.createChart($('c'), {autoSize:true, layout:{background:{color:'#0d1017'}, textColor:'#9aa3b5', fontSize:12},
+  grid:{vertLines:{visible:false}, horzLines:{color:'#161b26'}}, crosshair:{mode:0},
+  rightPriceScale:{borderVisible:false, scaleMargins:{top:0.1, bottom:0.08}}, timeScale:{borderVisible:false, rightOffset:6},
+  localization:{priceFormatter: p => p <= 0 ? '' : px(p)}});
+const s = chart.addCandlestickSeries({upColor:G, downColor:R, borderVisible:false, wickUpColor:G, wickDownColor:R, priceLineVisible:false});
+s.applyOptions({autoscaleInfoProvider: o => { const r = o(), t = cur; if (!r || !t) return r;
+  const lv = [t.stop, t.tp2, t.exit_level].filter(v => v != null && v > 0); if (!lv.length) return r;
+  return {priceRange:{minValue: Math.min(r.priceRange.minValue, ...lv), maxValue: Math.max(r.priceRange.maxValue, ...lv)}}; }});
+const step = () => tf==='1d' ? 86400 : 3600, snap = x => Math.floor(x/step())*step();
+function idx(t){ let lo=0, hi=times.length; while(lo<hi){const m=(lo+hi)>>1; if(times[m]<t) lo=m+1; else hi=m;} return lo; }
+function xOf(t){ if (!times.length) return null; const tt = snap(t); let i = idx(tt); if (i>=times.length) i = times.length-1 + (tt-times[times.length-1])/step();
+  return chart.timeScale().logicalToCoordinate(i); }
+const cv = $('ov'), g = cv.getContext('2d');
+function chip(x, y, text, bg){ g.font='600 12px -apple-system,Segoe UI,Roboto,sans-serif'; const w = g.measureText(text).width+12;
+  x = Math.min(x, cv.width/(devicePixelRatio||1) - w - 2); g.fillStyle=bg; g.beginPath(); g.roundRect ? g.roundRect(x,y-10,w,20,4) : g.rect(x,y-10,w,20); g.fill();
+  g.fillStyle='#0d1017'; g.fillText(text, x+6, y+4); }
+function hline(x1, x2, y, c, dash){ g.strokeStyle=c; g.lineWidth=1.4; g.setLineDash(dash||[]); g.beginPath(); g.moveTo(x1,y); g.lineTo(x2,y); g.stroke(); g.setLineDash([]); }
+function draw(){
+  const W = chart.timeScale().width(), H = $('c').clientHeight - 28, dpr = devicePixelRatio||1;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+'px'; cv.style.height=H+'px'; g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const t = cur; if (!t || !times.length) return;
+  const x1 = xOf(t.entry_time), x2 = Math.max(xOf(t.exit_time || times[times.length-1] + step()), x1 + 4), y = p => s.priceToCoordinate(p);
+  if (x1 == null) return;
+  const c = t.side==='long' ? '61,220,151' : '255,107,107';
+  if (t.kind === 'capitulation') {
+    const ye=y(t.entry), ys=y(t.stop), y1=y(t.tp1), y2=y(t.tp2);
+    g.fillStyle='rgba(61,220,151,.15)'; g.fillRect(x1, Math.min(ye,y2), x2-x1, Math.abs(y2-ye));
+    g.fillStyle='rgba(255,107,107,.18)'; g.fillRect(x1, Math.min(ye,ys), x2-x1, Math.abs(ys-ye));
+    hline(x1,x2,y2,G); hline(x1,x2,y1,G,[3,3]); hline(x1,x2,ye,B); hline(x1,x2,ys,R);
+    chip(x2+6,y2,'TP2 '+px(t.tp2),G); chip(x2+6,y1,'TP1 '+px(t.tp1),G); chip(x2+6,ye,'Вход '+px(t.entry),'#7aa7ff'); chip(x2+6,ys,'Стоп '+px(t.stop),R);
+    return; }
+  g.fillStyle=`rgba(${c},.09)`; g.fillRect(x1, 0, x2-x1, H); g.fillStyle=`rgba(${c},.9)`; g.fillRect(x1, 0, x2-x1, 4);
+  hline(x1, x2, y(t.entry), B); chip(Math.max(x1-4,2) , y(t.entry) + (t.side==='long'?16:-16), 'Вход '+px(t.entry), '#7aa7ff');
+  if (t.exit != null && !t.open) chip(x2+6, y(t.exit), 'Выход '+px(t.exit), (t.move_pct ?? t.result_pct) > 0 ? G : R);
+  if (t.stop) { hline(x1, x2, y(t.stop), R, [5,4]); chip(x2+6, y(t.stop), 'Стоп '+px(t.stop), R); }
+  if (t.open && t.exit_level) { hline(x1, W, y(t.exit_level), '#ffd27a', [6,4]); chip(W-150, y(t.exit_level)-14, 'Уровень выхода '+px(t.exit_level), '#ffd27a'); }
+}
+const redraw = () => requestAnimationFrame(draw);
+chart.timeScale().subscribeVisibleLogicalRangeChange(redraw); chart.timeScale().subscribeSizeChange(redraw); new ResizeObserver(redraw).observe($('c'));
+async function showChart(t){
+  tf = t.kind === 'capitulation' ? '1h' : '1d';
+  chart.applyOptions({timeScale:{timeVisible: tf==='1h'}});
+  cs = await j('api/candles?symbol='+t.symbol+'&tf='+tf+(tf==='1h' ? '&center='+t.entry_time : ''));
+  cs = cs.filter(c => c.open != null); times = cs.map(c => c.time); s.setData(cs);
+  const m = [{time:snap(t.entry_time), position: t.side==='long'?'belowBar':'aboveBar', color:B, shape: t.side==='long'?'arrowUp':'arrowDown', size:2}];
+  if (t.exit_time) m.push({time:snap(t.exit_time), position: t.side==='long'?'aboveBar':'belowBar', color: (t.result_pct ?? t.move_pct) > 0 ? G : R, shape:'circle', size:1});
+  s.setMarkers(m.filter(x => times.length && x.time >= times[0] && x.time <= times[times.length-1]).sort((a,b)=>a.time-b.time));
+  $('empty').style.display = cs.length ? 'none' : 'flex'; $('empty').textContent = 'Нет свечей по монете: история ещё загружается.';
+  const end = t.exit_time || times[times.length-1], span = Math.max(end - t.entry_time, step()*(tf==='1d'?20:16));
+  chart.timeScale().setVisibleLogicalRange({from: idx(t.entry_time - span*0.9), to: idx(end + span*0.4) + 3}); redraw();
+}
+// ---------- рассказ о сделке простыми словами
+function story(t){
+  const L = t.side==='long', act = L ? 'купил' : 'продал в шорт', dir = L ? 'вверх' : 'вниз';
+  const held = t.exit_time ? Math.max(1, Math.round((t.exit_time - t.entry_time)/86400)) : Math.max(1, Math.round((Date.now()/1000 - t.entry_time)/86400));
+  if (t.kind === 'trend') return `Бот ${act} ${coin(t.symbol)} по ${px(t.entry)} на дневном закрытии ${day(t.entry_time)}: тренд ${dir} подтвердили почти все дневные сигналы (каналы 10–160 дней и средние). `+
+    `Размер ${t.size_pct}% депозита. ` + (t.open ? `Позиция открыта ${held} дн. Закрываем, если день закроется ${L?'ниже':'выше'} <b>${px(t.exit_level)}</b> (жёлтая линия), уровень сдвигается за трендом.`
+      : `Через ${held} дн. тренд сломался, выход по ${px(t.exit)}: цена прошла ${sg(t.move_pct)} в нашу сторону, итог <b class="${t.result_pct>0?'pos':'neg'}">${sg(t.result_pct,2)} депозита</b>.`);
+  if (t.kind === 'listing') return `${coin(t.symbol)} только появилась на фьючерсах, и первый день закрылся ниже цены открытия. Новые монеты обычно дешевеют первые недели из-за разлоков, поэтому шорт по ${px(t.entry)} на ${t.size_pct}% депозита, стоп ${px(t.stop)}. ` +
+    (t.open ? 'Позиция открыта, выход по времени через 60 дней или по стопу.' : `Закрыта (${t.exit_reason||''}) по ${px(t.exit)}, итог <b class="${t.result_pct>0?'pos':'neg'}">${sg(t.result_pct,2)} депозита</b>.`);
+  return `${coin(t.symbol)} резко упала, а открытый интерес снизился: позиции вынесло, продавцы выдохлись. Бот ${act} по ${px(t.entry)} со стопом ${px(t.stop)} (риск ${t.risk_pct?.toFixed(1)}% депозита), цели ${px(t.tp1)} и ${px(t.tp2)}. ` +
+    (t.open ? 'Сделка открыта.' : `Закрыта: ${({tp2:'цель 2',stop:'стоп',breakeven_stop:'безубыток после цели 1',timeout:'по времени'})[t.exit_reason]||t.exit_reason||''}, итог <b class="${t.r>0?'pos':'neg'}">${t.r>0?'+':''}${t.r?.toFixed(2)}R (${sg(t.result_pct,2)} депозита)</b>.`);
+}
+async function select(t){
+  cur = t; renderList(false);
+  $('ttl').textContent = coin(t.symbol); $('bdg').innerHTML = `<span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>`;
+  $('kindname').textContent = KIND[t.kind] + ' · ' + (t.kind==='capitulation' ? dt(t.entry_time)+' UTC' : day(t.entry_time)) + (t.open ? ' · открыта' : '');
+  $('story').innerHTML = story(t);
+  const c = t.kind==='capitulation'
+    ? [['Вход',px(t.entry),'ce'],['Стоп',px(t.stop),'cs'],['Цель 1',px(t.tp1),'ct'],['Цель 2',px(t.tp2),'ct'],['Риск',(t.risk_pct?.toFixed(1)||'—')+'%',''],['Итог',t.r==null?'открыта':(t.r>0?'+':'')+t.r.toFixed(2)+'R','']]
+    : [['Вход',px(t.entry),'ce'], t.open ? (t.kind==='listing' ? ['Стоп',px(t.stop),'cs'] : ['Уровень выхода',px(t.exit_level),'cs']) : ['Выход',px(t.exit),''], ['Размер',(t.size_pct??'—')+'% депо',''],
+       ['Движение цены',sg(t.move_pct),''],[t.open?'Итог сейчас':'Итог',sg(t.result_pct,2)+' депо',''],
+       ['Дней',t.exit_time?Math.max(1,Math.round((t.exit_time-t.entry_time)/86400)):'идёт','']];
+  $('cards').innerHTML = c.map(([k,v,cl]) => `<div class="${cl}"><span>${k}</span><b>${v}</b></div>`).join('');
+  const i = view.indexOf(t); $('prev').disabled = i >= view.length-1; $('next').disabled = i <= 0;
+  await showChart(t);
+}
+// ---------- лента
+function filter(){
+  view = F.items.filter(t => (S.kind==='all' || t.kind===S.kind) && (!S.open || t.open) && (!S.text || coin(t.symbol).toLowerCase().includes(S.text)))
+    .sort((a,b) => (b.open - a.open) || b.entry_time - a.entry_time);
+}
+function renderList(reset=true){
+  if (reset) shown = 150;
+  $('list').innerHTML = view.slice(0, shown).map((t,i) => { const res = t.kind==='capitulation' && t.r!=null ? t.r : t.result_pct;
+    return `<div class="row ${t===cur?'sel':''}" data-i="${i}"><div class="d">${day(t.entry_time)}<br>${KIND[t.kind].split(' ')[0]}</div>
+    <div><span class="c">${coin(t.symbol)}</span><span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>${t.open?'<span class="pill">открыта</span>':''}
+    <div class="t">${KIND[t.kind].slice(2)}${t.size_pct?' · '+t.size_pct+'% депо':''}${t.risk_pct?' · риск '+t.risk_pct.toFixed(1)+'%':''}</div></div>
+    <div class="res ${(t.result_pct ?? 0)>0?'pos':'neg'}">${t.open ? (t.result_pct!=null ? sg(t.result_pct,2)+'<small>сейчас, депо</small>' : '—') :
+      t.kind==='capitulation' && t.r!=null ? (t.r>0?'+':'')+t.r.toFixed(1)+'R<small>'+sg(t.result_pct,2)+' депо</small>' : sg(t.result_pct,2)+'<small>депозита</small>'}</div></div>`; }).join('')
+    + (view.length > shown ? `<button class="more" id="more">показать ещё (${view.length - shown})</button>` : '')
+    || `<div class="mut" style="padding:20px">${S.source==='live' ? 'Живых сигналов пока нет: бот публикует их по мере появления (тренд около раза в день). Историю смотри во вкладке «История (бэктест)».' : (F.note || 'Нет сигналов под фильтр')}</div>`;
+  document.querySelectorAll('.row').forEach(r => r.onclick = () => select(view[+r.dataset.i]));
+  if ($('more')) $('more').onclick = () => { shown += 300; renderList(false); };
+}
+function renderKpi(){
+  const k = S.kind==='all' ? 'all' : S.kind, m = (F.summary||{})[k] || {}, te = F.trend_equity;
+  const cards = [['Сигналов', m.signals ?? 0], ['В месяц', m.per_month ?? 0], ['Открыто', m.open ?? 0], ['В плюс', (m.win_pct ?? 0)+'%'],
+    ['Средний плюс', sg(m.avg_win,2)+' депо'], ['Средний минус', sg(m.avg_loss,2)+' депо']];
+  if (S.source==='backtest' && te && (k==='all' || k==='trend')) cards.push(['Тренд: годовых', sg(te.cagr_pct,0)], ['Тренд: макс. просадка', sg(te.max_dd_pct,0)]);
+  $('kpi').innerHTML = cards.map(([a,b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('');
+  $('sub').textContent = S.source==='live' ? 'то, что бот опубликовал в канал' : `история ${F.period ? F.period.join(' … ') : ''}, в канал не публикуется`;
+}
+async function load(){
+  document.querySelectorAll('[data-src]').forEach(b => b.classList.toggle('on', b.dataset.src===S.source));
+  document.querySelectorAll('#kinds button, #how div').forEach(b => b.classList.toggle('on', b.dataset.k===S.kind));
+  F = await j('api/feed?source='+S.source); F.items = F.items || []; filter(); renderKpi(); renderList();
+  if (view.length) select(view[0]); else { cur = null; s.setData([]); s.setMarkers([]); redraw(); $('ttl').textContent='Нет сигналов'; $('story').innerHTML=''; $('cards').innerHTML=''; $('bdg').innerHTML=''; $('kindname').textContent=''; }
+}
+function setKind(k){ S.kind = S.kind===k && k!=='all' ? 'all' : k; load(); }
+document.querySelectorAll('[data-src]').forEach(b => b.onclick = () => { S.source = b.dataset.src; load(); });
+document.querySelectorAll('#kinds button').forEach(b => b.onclick = () => setKind(b.dataset.k));
+document.querySelectorAll('#how div').forEach(b => b.onclick = () => setKind(b.dataset.k));
+$('q').oninput = e => { S.text = e.target.value.trim().toLowerCase(); filter(); renderList(); };
+$('onlyOpen').onchange = e => { S.open = e.target.checked; filter(); renderList(); };
+const move = d => { const i = view.indexOf(cur) + d; if (i >= 0 && i < view.length) { select(view[i]); const el = document.querySelector('.row.sel'); el && el.scrollIntoView({block:'nearest'}); } };
+$('prev').onclick = () => move(1); $('next').onclick = () => move(-1);
+document.addEventListener('keydown', e => { if (e.target.tagName==='INPUT') return; if (e.key==='ArrowLeft'||e.key==='ArrowDown') { e.preventDefault(); move(1); } if (e.key==='ArrowRight'||e.key==='ArrowUp') { e.preventDefault(); move(-1); } });
+async function poll(){ try { const st = await j('api/status'); ST = st; const b = $('status');
+  const show = st.state==='work' || st.state==='fail' || (st.warn||[]).length || (st.state==='ok' && Date.now()/1000 - st.ts < 60);
+  b.style.display = show ? 'block' : 'none'; b.className = 'st-'+st.state;
+  b.innerHTML = `<b>${st.state==='work'?'⏳ Подготовка данных: '+st.pct+'%':st.state==='ok'?'✅ Подготовка завершена':'❌ Ошибка подготовки'}</b> <span class="mut">${st.text||''}</span>
+    <div class="bar"><i style="width:${st.state==='ok'?100:st.pct||0}%"></i></div>` + (st.warn||[]).map(w => `<div class="warn">⚠️ ${w}</div>`).join('');
+  if (st.state==='ok' && poll.was==='work') load(); poll.was = st.state; } catch(e){} setTimeout(poll, 3000); }
+$('ovl').href = 'overview' + (tok ? '?'+tok : '');
+(async () => { const live = await j('api/feed?source=live'); if (!q.get('source') && !(live.items||[]).length) S.source = 'backtest'; load(); poll(); })();
+</script></body></html>
+"""
+
+# старый экран по монетам: /coins
+COINS_PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>sigbot</title><script src="static/lightweight-charts.js"></script>
 <style>
 body{margin:0;background:#0d1017;color:#e8ebf1;font:14px -apple-system,Segoe UI,Roboto,sans-serif}
@@ -273,10 +480,21 @@ def make_app(cfg, conn) -> web.Application:
     async def index(_):
         return web.Response(text=PAGE, content_type="text/html")
 
+    async def coins(_):
+        return web.Response(text=COINS_PAGE, content_type="text/html")
+
     async def symbols(_):
         syms = settings.get(conn, "symbols_manual") or settings.get(conn, "universe") or [
             r[0] for r in conn.execute("SELECT DISTINCT symbol FROM candles WHERE tf='1h'")]
         return web.json_response(syms)
+
+    _ld = {}
+
+    def listing_daily(sym):
+        from . import listings_bt
+        if "D" not in _ld:
+            _ld["D"] = json.loads(listings_bt.CACHE.read_text()) if listings_bt.CACHE.exists() else {}
+        return [{"time": r[0] // 1000, "open": r[1], "high": r[2], "low": r[3], "close": r[4]} for r in _ld["D"].get(sym, [])]
 
     async def candles(request):
         sym = request.query.get("symbol", "BTCUSDT")
@@ -287,6 +505,8 @@ def make_app(cfg, conn) -> web.Application:
             for d, _ts, o, h, lo, c in rows:
                 x = out.get(d)
                 out[d] = [o, h, lo, c] if x is None else [x[0], max(x[1], h), min(x[2], lo), c]
+            if not out:                        # новые листинги: дневки из архива всех фьючерсов (listings_bt)
+                return web.json_response(listing_daily(sym))
             return web.json_response([{"time": d, "open": v[0], "high": v[1], "low": v[2], "close": v[3]}
                                       for d, v in out.items()])
         c = int(request.query.get("center") or 0) * 1000     # окно вокруг выбранного сигнала, иначе последние бары
@@ -418,6 +638,37 @@ def make_app(cfg, conn) -> web.Application:
                 prev = sd
         return web.json_response(out)
 
+    def live_feed() -> list[dict]:
+        cfg_l = cfg["listings"]
+        out = []
+        for r in conn.execute("SELECT * FROM trend_signals ORDER BY open_day"):
+            out.append({"kind": "trend", "symbol": r["symbol"], "side": r["side"], "entry_time": r["open_day"] // 1000 + 86400,
+                        "exit_time": r["close_day"] // 1000 + 86400 if r["close_day"] else None, "entry": r["entry"],
+                        "exit": r["exit_price"], "size_pct": r["size_pct"], "exit_level": r["exit_level"],
+                        "move_pct": r["move_pct"], "result_pct": r["result_pct"], "open": r["status"] == "open",
+                        "exit_reason": "тренд сломался" if r["status"] != "open" else None})
+        for t in live_trades():
+            out.append({"kind": "capitulation", "symbol": t["symbol"], "side": t["side"], "entry_time": t["entry_time"],
+                        "exit_time": t["exit_time"], "entry": t["entry"], "stop": t["stop"], "tp1": t["tp1"], "tp2": t["tp2"],
+                        "risk_pct": t["risk_pct"], "leverage": t["leverage"], "r": t["r"], "open": t["r"] is None,
+                        "result_pct": round(t["r"] * t["risk_pct"], 2) if t["r"] is not None and t["risk_pct"] else None})
+        for r in conn.execute("SELECT * FROM listing_trades WHERE status IN ('open','closed')"):
+            out.append({"kind": "listing", "symbol": r["symbol"], "side": "short", "entry_time": r["entry_ts"] // 1000,
+                        "exit_time": r["exit_ts"] // 1000 if r["exit_ts"] else None, "entry": r["entry"], "stop": r["stop"],
+                        "exit": r["exit_price"], "size_pct": r["notional_pct"], "result_pct": r["pnl_pct"],
+                        "open": r["status"] == "open", "exit_reason": {"stop": "стоп", "time": "по времени"}.get(r["exit_reason"])})
+        return sorted(out, key=lambda x: x["entry_time"])
+
+    async def feed_api(request):
+        from . import feed as fd
+        if request.query.get("source") == "backtest":
+            if not fd.FEED.exists():
+                from . import autoprep
+                return web.json_response({"items": [], "summary": {}, "note": autoprep.STATUS.get("text") or "ещё не посчитана"})
+            return web.json_response(json.loads(fd.FEED.read_text()))
+        items = live_feed()
+        return web.json_response({"items": items, "summary": {"all": fd.summary(items, 30)}})
+
     async def status(_):
         from . import autoprep
         return web.json_response(autoprep.STATUS)
@@ -428,12 +679,14 @@ def make_app(cfg, conn) -> web.Application:
 
     app = web.Application(middlewares=[auth])
     app.router.add_get("/", index)
+    app.router.add_get("/coins", coins)
     app.router.add_get("/api/symbols", symbols)
     app.router.add_get("/api/candles", candles)
     app.router.add_get("/api/trades", trades)
     app.router.add_get("/api/stats", stats)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/status", status)
+    app.router.add_get("/api/feed", feed_api)
     app.router.add_get("/overview", overview_page)
     app.router.add_get("/api/overview", overview_api)
     app.router.add_get("/api/live", live_api)

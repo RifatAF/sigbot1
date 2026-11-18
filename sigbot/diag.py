@@ -187,9 +187,18 @@ async def test_posts(cfg, conn, tg, chat_id) -> int:
     if not C.empty:
         W = portfolio.weights(C, V, cfg["portfolio"], universe=syms, FR=FR).iloc[-1]
         w = {s: float(x) for s, x in W.items() if abs(x) >= 0.001}
-        text, _ = templates.portfolio(w, list(w)[:2], [], 0.0, 0.0, cfg["portfolio"], mode, full=True)
+        from . import feed
+        big = sorted(w.items(), key=lambda x: -abs(x[1]))[:1] or [("BTCUSDT", 0.12)]
+        sym2, w2 = big[0]
+        side = "long" if w2 > 0 else "short"
+        lv = feed.exit_level(C[sym2].dropna().values, 1 if w2 > 0 else -1, cfg["portfolio"]) if sym2 in C else None
+        px = float(C[sym2].dropna().iloc[-1]) if sym2 in C else entry
+        text, _ = templates.trend_signal(sym2, side, px, abs(w2) * 100, lv, mode,
+                                         {"win_pct": 38, "avg_win": 2.01, "avg_loss": -0.68})
         await tg.send_message(chat_id, T + text)
-        sent += 1
+        text, _ = templates.trend_exit(sym2, side, px, px * 1.08, 8.0, abs(w2) * 8, 9, mode)
+        await tg.send_message(chat_id, T + text)
+        sent += 2
     lc = cfg["listings"]
     text, _ = templates.listing_signal("NEWCOINUSDT", 0.4321, 0.4321 * (1 + lc["stop_pct"] / 100), lc, mode)
     await tg.send_message(chat_id, T + text)

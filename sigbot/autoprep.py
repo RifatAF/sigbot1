@@ -57,6 +57,12 @@ def _overview_sync(cfg):
     overview.save(overview.build(conn, cfg))
 
 
+def _feed_sync(cfg):
+    from . import db, feed
+    conn = db.connect(cfg["storage"]["db_path"])
+    feed.save(feed.build(conn, cfg))
+
+
 async def run(cfg, conn, http):
     STATUS.update(warn=[], pct=0)
     _set("work", "Проверяю полноту истории по монетам", 1)
@@ -99,6 +105,11 @@ async def run(cfg, conn, http):
         if len(no_oi) > len(syms) // 3:
             _set("warn", f"Архив data.binance.vision не открывается: нет истории OI по {len(no_oi)} монетам, "
                          "сигналов в бэктесте будет меньше. Включи VPN и перезапусти бота")
+        try:
+            from . import settings as _st
+            _st.put(conn, "perp_kinds", await bn.perp_kinds())
+        except Exception:
+            pass
         if changed or need_backtest(cfg):
             _set("work", "Считаю бэктест часовых сигналов (около минуты)", 72)
             path, n = await asyncio.to_thread(_backtest_sync, cfg)
@@ -111,6 +122,12 @@ async def run(cfg, conn, http):
             except Exception as e:
                 log.exception("overview")
                 _set("warn", f"Сводный отчёт /overview не посчитан ({str(e)[:80]}), бэктест сигналов на главной есть")
+        _set("work", "Собираю ленту сигналов", 97)
+        try:
+            await asyncio.to_thread(_feed_sync, cfg)
+        except Exception as e:
+            log.exception("feed")
+            _set("warn", f"Лента сигналов не собрана: {str(e)[:100]}")
         _set("ok", "Готово: история загружена, бэктест посчитан" + (" (есть предупреждения)" if STATUS["warn"] else ""), 100)
     except Exception as e:
         log.exception("autoprep")

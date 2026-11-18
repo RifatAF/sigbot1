@@ -66,6 +66,13 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
                     await lst.run_daily(now)
                 except Exception as e:
                     log.exception("listings: %s", e)
+            if time.gmtime(now / 1000).tm_hour == 3 and settings.get(conn, "sched_feed") != now // DAY:
+                settings.put(conn, "sched_feed", now // DAY)           # бэктест ленты обновляется раз в сутки
+                try:
+                    from . import autoprep
+                    await asyncio.to_thread(autoprep._feed_sync, cfg)
+                except Exception as e:
+                    log.exception("feed: %s", e)
             h_utc = time.gmtime(now / 1000).tm_hour
             wday = time.gmtime(now / 1000).tm_wday
             day = now // DAY

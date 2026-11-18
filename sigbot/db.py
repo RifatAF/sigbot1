@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS portfolio_weights (
 CREATE TABLE IF NOT EXISTS portfolio_equity (
     day INTEGER PRIMARY KEY, equity REAL, pnl_pct REAL, gross REAL
 );
+CREATE TABLE IF NOT EXISTS trend_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL, side TEXT NOT NULL, open_day INTEGER NOT NULL, entry REAL NOT NULL, size_pct REAL NOT NULL,
+    exit_level REAL, status TEXT NOT NULL DEFAULT 'open', close_day INTEGER, exit_price REAL, move_pct REAL, result_pct REAL
+);
 CREATE TABLE IF NOT EXISTS listing_trades (
     symbol TEXT PRIMARY KEY, onboard_ts INTEGER, entry_ts INTEGER, entry REAL, stop REAL, exit_due_ts INTEGER,
     notional_pct REAL, status TEXT, exit_ts INTEGER, exit_price REAL, exit_reason TEXT, pnl_pct REAL

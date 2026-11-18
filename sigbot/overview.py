@@ -32,7 +32,10 @@ def build(conn, cfg, start="2020-07-01", end="2026-11-01", refresh=False) -> dic
     d = portfolio.simulate(C, FR, W, cfg["trade"]["fee_taker_pct"])
     tp = d.pnl[(d.index >= s) & (d.index < e)]
     D = listings_bt.load(refresh)
-    lp, trades = listings_bt.backtest(D, cfg["listings"], cfg["trade"]["fee_taker_pct"], s, e)
+    from . import settings
+    kinds = settings.get(conn, "perp_kinds") or {}           # акции и сырьё на Binance: не шортим как листинги
+    lp, trades = listings_bt.backtest(D, cfg["listings"], cfg["trade"]["fee_taker_pct"], s, e,
+                                      exclude={k for k, v in kinds.items() if v != "COIN"})
     lp = lp.reindex(tp.index).fillna(0)
     liq = V.rolling(30, min_periods=20).mean()
     uni = (liq.rank(axis=1, ascending=False) <= pc["top_n"]).shift(1).fillna(False)

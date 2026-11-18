@@ -204,6 +204,53 @@ def portfolio(w: dict, opened: list[str], closed: list[str], total_pct: float, d
     return "\n".join(lines), f.numbers
 
 
+def trend_signal(symbol: str, side: str, entry: float, size_pct: float, exit_level: float | None, mode: str,
+                 stats: dict | None = None) -> tuple[str, list[float]]:
+    """Сигнал трендового портфеля: вход, размер, уровень выхода. Цели нет: держим, пока тренд жив."""
+    f = Fmt()
+    long = side == "long"
+    lines = [f"{'🟢' if long else '🔴'} <b>{_coin(symbol)} {'LONG' if long else 'SHORT'}</b>  #{_coin(symbol)} · trend", "",
+             f"Entry: <b>{f.p(entry)}</b> (daily close)",
+             f"Size: {f.n(size_pct, 1)}% of capital"]
+    if exit_level:
+        lines.append(f"Exit: daily close {'below' if long else 'above'} <b>{f.p(exit_level)}</b> (the trend breaks). "
+                     "The level moves with the trend, updates come in the weekly list")
+    else:
+        lines.append("Exit: when the trend breaks, the bot posts it")
+    lines.append("No take profit: the position rides the trend as long as it lasts")
+    if stats and stats.get("win_pct"):
+        lines += ["", f"Backtest of these signals: {f.i(stats['win_pct'])}% win, winners average "
+                      f"+{f.n(stats['avg_win'], 2)}% of capital, losers {f.n(stats['avg_loss'], 2)}%. "
+                      "Few big wins pay for many small losses."]
+    lines += ["", "Trend following on daily channels and moving averages. Not financial advice." + _tag(mode)]
+    return "\n".join(lines), f.numbers
+
+
+def trend_exit(symbol: str, side: str, entry: float, price: float, move_pct: float, result_pct: float,
+               days: int, mode: str) -> tuple[str, list[float]]:
+    f = Fmt()
+    head = "✅ Closed in profit" if move_pct > 0 else "❌ Closed"
+    lines = [f"{head}: <b>{_coin(symbol)} {'LONG' if side == 'long' else 'SHORT'}</b> (trend ended)",
+             f"Entry {f.p(entry)} → exit {f.p(price)} after {f.i(days)} days",
+             f"Price move in our favour: {f.n(move_pct, 2, sign=True)}%",
+             f"Result: {f.n(result_pct, 2, sign=True)}% of capital" + _tag(mode)]
+    return "\n".join(lines), f.numbers
+
+
+def trend_open_list(rows: list[dict], mode: str) -> tuple[str, list[float]]:
+    """Раз в неделю: открытые сигналы тренда с текущими уровнями выхода."""
+    f = Fmt()
+    lines = ["🧭 <b>Open trend signals</b>", ""]
+    for r in rows:
+        lv = f"exit {'below' if r['side'] == 'long' else 'above'} {f.p(r['exit_level'])}" if r.get("exit_level") else "exit on trend break"
+        lines.append(f"{'🟢' if r['side'] == 'long' else '🔴'} {_coin(r['symbol'])} {r['side'].upper()} "
+                     f"from {f.p(r['entry'])}, {f.n(r['size_pct'], 1)}% · {lv}")
+    if not rows:
+        lines.append("No open trend signals")
+    lines += ["", "Exit levels are daily closes. Not financial advice." + _tag(mode)]
+    return "\n".join(lines), f.numbers
+
+
 def listing_signal(symbol: str, entry: float, stop: float, lc: dict, mode: str) -> tuple[str, list[float]]:
     f = Fmt()
     lines = [f"🔴 <b>{_coin(symbol)} SHORT</b>  #{_coin(symbol)} · new listing", "",

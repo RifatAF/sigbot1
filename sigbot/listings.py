@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from . import templates
+from . import settings, templates
 
 log = logging.getLogger(__name__)
 DAY = 86_400_000
@@ -28,7 +28,14 @@ class ListingShorts:
         lc = self.cfg["listings"]
         posts = []
         # 1. новые листинги
+        try:
+            kinds = await self.bn.perp_kinds()
+            settings.put(self.conn, "perp_kinds", kinds)
+        except Exception:
+            kinds = settings.get(self.conn, "perp_kinds") or {}
         for sym, onboard in await self.bn.perp_listings():
+            if kinds.get(sym, "COIN") != "COIN":           # акции, золото, валюты: не новые токены, правило к ним не относится
+                continue
             if onboard <= 0 or now - onboard > (lc["max_entry_delay_days"] + 2) * DAY or now - onboard < DAY:
                 continue
             if self.conn.execute("SELECT 1 FROM listing_trades WHERE symbol=?", (sym,)).fetchone():
