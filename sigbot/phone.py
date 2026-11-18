@@ -21,6 +21,7 @@ from . import settings
 log = logging.getLogger(__name__)
 BIN = Path("bin")
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+LHR_RE = re.compile(r"https://[a-z0-9-]+\.lhr\.life")
 STATE: dict = {"url": None, "proc": None, "log": []}
 
 
@@ -143,7 +144,40 @@ async def start(http, port: int, wait: float = 40) -> str | None:
     return STATE["url"]
 
 
+async def start_lhr(port: int, wait: float = 30) -> str | None:
+    """Запасной туннель localhost.run через ssh, который есть в Windows 10 и 11. Ничего не скачивает."""
+    pr = STATE.get("lhr")
+    if pr and pr.returncode is None and STATE.get("lhr_url"):
+        return STATE["lhr_url"]
+    ssh = shutil.which("ssh")
+    if not ssh:
+        return None
+    pr = await asyncio.create_subprocess_exec(
+        ssh, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=" + os.devnull, "-o", "ServerAliveInterval=30",
+        "-o", "ExitOnForwardFailure=yes", "-R", f"80:127.0.0.1:{port}", "nokey@localhost.run",
+        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    STATE.update(lhr=pr, lhr_url=None)
+
+    async def read():
+        async for line in pr.stdout:
+            text = line.decode(errors="replace").strip()
+            STATE["log"] = (STATE.get("log", []) + ["lhr: " + text])[-60:]
+            m = LHR_RE.search(text)
+            if m and not STATE["lhr_url"]:
+                STATE["lhr_url"] = m.group(0)
+    asyncio.create_task(read())
+    for _ in range(int(wait * 2)):
+        if STATE["lhr_url"] or pr.returncode is not None:
+            break
+        await asyncio.sleep(0.5)
+    return STATE["lhr_url"]
+
+
 def stop():
+    pr = STATE.get("lhr")
+    if pr and pr.returncode is None:
+        pr.terminate()
+    STATE.update(lhr=None, lhr_url=None)
     pr = STATE.get("proc")
     if pr and pr.returncode is None:
         pr.terminate()

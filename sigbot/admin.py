@@ -117,11 +117,22 @@ class Admin:
                              "запомнил «сайт не найден», открой эту через пару минут.\n")
             else:
                 errs = phone.tunnel_errors()
-                lines.append("⚠️ С компьютера пока не открывается. Причина: " + escape(why or "нет ответа")
-                             + ("\nCloudflare пишет: " + escape(" | ".join(e[-140:] for e in errs)) if errs else "")
-                             + "\nНажми «🔁 Новый адрес» и не открывай ссылку, пока бот не напишет ✅. Не поможет: пришли этот текст мне.\n")
+                diag = "Cloudflare: " + (why or "нет ответа") + ((" | " + " | ".join(e[-140:] for e in errs)) if errs else "")
+                lines.append("⚠️ С компьютера не открывается. " + escape(diag) + "\n")
+                print("📱 " + diag, flush=True)
         else:
-            lines.append(f"🌍 Туннель не запустился{escape(err)}. Нажми ещё раз.\n")
+            lines.append(f"🌍 Cloudflare не запустился{escape(err)}.\n")
+        if not url or not ok:                                # запасной путь: localhost.run через ssh Windows
+            try:
+                alt = await phone.start_lhr(port)
+            except Exception as e:
+                alt, why2 = None, str(e)[:100]
+            if alt:
+                ok2, why2 = await phone.check(alt, tok, tries=6)
+                lines.append(f"🌍 <b>Запасная ссылка</b>:\n{alt}/?token={tok}\n"
+                             + ("✅ Проверил с компьютера: открывается.\n" if ok2 else f"⚠️ Тоже не открывается: {escape(why2)}\n"))
+            else:
+                lines.append("⚠️ Запасной туннель тоже не поднялся. Перешли мне это сообщение целиком.\n")
         ips = phone.lan_ips()
         if self.cfg["dashboard"].get("host") != "0.0.0.0":
             lines.append("🏠 Wi-Fi выключен: в config.yaml dashboard.host должен быть 0.0.0.0.\n")

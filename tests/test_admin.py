@@ -109,9 +109,14 @@ def test_phone_screen_lists_links(cfg, conn, monkeypatch):
     monkeypatch.setattr(phone, "start", start)
     monkeypatch.setattr(phone, "check", check)
     monkeypatch.setattr(phone, "lan_ips", lambda: ["192.168.1.5"])
+
+    async def lhr(port, wait=30):
+        return "https://zz.lhr.life"
+    monkeypatch.setattr(phone, "start_lhr", lhr)
     cfg["dashboard"]["host"] = "0.0.0.0"
     adm = Admin(cfg, conn, None, 7, None, None, None, None, None, None)
     text, _ = asyncio.run(adm.phone_screen())
     tok = phone.token(conn)
     assert f"https://abc.trycloudflare.com/?token={tok}" in text and f"http://192.168.1.5:8787/?token={tok}" in text
-    assert "allow_phone.bat" in text and "пока не открывается" in text and "нет связи" in text and "VPN" not in text
+    assert "allow_phone.bat" in text and "не открывается" in text and "нет связи" in text and "VPN" not in text
+    assert f"https://zz.lhr.life/?token={tok}" in text
