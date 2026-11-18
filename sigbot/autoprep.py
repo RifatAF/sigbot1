@@ -143,6 +143,14 @@ async def run(cfg, conn, http):
             except Exception as e:
                 log.exception("overview")
                 _set("warn", f"Сводный отчёт /overview не посчитан ({str(e)[:80]}), бэктест сигналов на главной есть")
+        from .listings_bt import BYBIT_REPORT, bybit_report
+        if not BYBIT_REPORT.exists() or time.time() - BYBIT_REPORT.stat().st_mtime > 7 * 86400:
+            _set("work", "Бэктест листингов Bybit (около минуты)", 93)
+            try:
+                await asyncio.to_thread(bybit_report, cfg)
+            except Exception as e:
+                log.warning("bybit report: %s", e)
+                _set("warn", f"Bybit не открылся ({str(e)[:80]}), бэктест листингов Bybit не посчитан. Остальное работает")
         _set("work", "Собираю ленту сигналов", 97)
         try:
             await asyncio.to_thread(_feed_sync, cfg)

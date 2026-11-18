@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import pandas as pd
 
 from . import portfolio
 
+log = logging.getLogger(__name__)
 DAY = 86_400_000
 FEED = Path("reports/feed.json")
 
@@ -158,7 +160,7 @@ def with_plan(items: list[dict], H, L, C, pc: dict, fee_pct: float) -> list[dict
             finish(st, it["exit_time"], it["exit"], "trend")
             mv, res = realized(st, it["size_pct"], fee_pct)
         last = st["exits"][-1] if st["exits"] else None
-        it.update({k: st[k] for k in ("stop", "tp1", "tp2", "tp1_part", "tp2_part")})
+        it.update({k: st[k] for k in ("stop", "tp1", "tp2", "tp1_part", "tp2_part")}, atr=float(A.at[d0, sym]))
         it.update(exits=st["exits"], rem=round(st["rem"], 4), move_pct=mv, result_pct=res)
         if st["rem"] <= 1e-9 and last:                               # стоп или все части закрыты раньше тренда
             it.update(open=False, exit_time=last["t"], exit=last["price"])
@@ -235,6 +237,66 @@ def summary(items: list[dict], days: float) -> dict:
             "sum_pct": round(float(np.nansum(res)), 1)}
 
 
+QS = (10, 25, 50, 75, 90)
+
+
+def _quant(M: list[list[float]], min_n: int = 30) -> dict | None:
+    """Квантили хода цены по шагам после входа. Ход в нашу сторону, в единицах сигнала (ATR, риск, %)."""
+    if len(M) < min_n:
+        return None
+    A = np.array([r + [np.nan] * (max(map(len, M)) - len(r)) for r in M], float)
+    ok = np.sum(~np.isnan(A), 0) >= min_n
+    A = A[:, ok]
+    return {"n": len(M), "q": {str(q): [round(float(v), 3) for v in np.nanpercentile(A, q, axis=0)] for q in QS}}
+
+
+def paths(conn, trend: list[dict], hourly: list[dict], CL: pd.DataFrame) -> dict:
+    """Обычный путь цены после сигнала: как шла цена у всех прошлых сигналов этого типа (медиана и разброс).
+    Это не прогноз конкретной монеты, а статистика: в половине случаев цена была выше медианы, в половине ниже."""
+    out = {}
+    M = []
+    for it in trend:
+        a, d0 = it.get("atr"), it["entry_time"] * 1000 - DAY
+        if not a or it["symbol"] not in CL or d0 not in CL.index:
+            continue
+        sd = 1 if it["side"] == "long" else -1
+        x = CL[it["symbol"]].loc[d0:d0 + 30 * DAY].values
+        M.append([float(v) for v in (x / it["entry"] - 1) * sd * it["entry"] / a])
+    r = _quant(M)
+    if r:
+        out["trend"] = {**r, "step": 86400, "unit": "atr"}
+    M = []
+    for it in hourly:
+        risk = abs(it["entry"] - (it.get("stop") or it["entry"]))
+        if not risk:
+            continue
+        t0 = (it["entry_time"] + 3600) * 1000
+        x = [c for (c,) in conn.execute("SELECT close FROM candles WHERE symbol=? AND market='futures' AND tf='1h' "
+                                         "AND ts>=? AND ts<? ORDER BY ts", (it["symbol"], t0 - 3_600_000, t0 + 72 * 3_600_000))]
+        sd = 1 if it["side"] == "long" else -1
+        if x:
+            M.append([(c / it["entry"] - 1) * sd * it["entry"] / risk for c in x])
+    r = _quant(M, 20)
+    if r:
+        out["capitulation"] = {**r, "step": 3600, "unit": "risk"}
+    try:
+        from .listings_bt import CACHE
+        if CACHE.exists():
+            D, M = json.loads(CACHE.read_text()), []
+            for s, v in D.items():
+                if len(v) > 3 and not v[1][4] < v[0][1]:              # те же условия входа: слабый первый день
+                    continue
+                if len(v) > 3:
+                    e = v[1][4]
+                    M.append([(1 - r_[4] / e) * 100 for r_ in v[1:62]])
+            r = _quant(M)
+            if r:
+                out["listing"] = {**r, "step": 86400, "unit": "pct"}
+    except Exception as e:
+        log.warning("listing paths: %s", e)
+    return out
+
+
 def equity_stats(items: list[dict]) -> dict:
     """Сумма итогов закрытых сигналов по дате выхода: доход по годам и максимальная просадка (в % депозита, без сложного %)."""
     done = sorted((x["exit_time"], x["result_pct"]) for x in items if not x.get("open") and x.get("exit_time")
@@ -291,12 +353,24 @@ def build(conn, cfg, start="2020-07-01", end=None) -> dict:
                             "exits": [] if t["reason"] == "open" else
                             [{"what": {"stop": "sl", "time": "time", "delisted": "delist"}.get(t["reason"], t["reason"]),
                               "t": t["exit_t"] // 1000, "price": t["exit"], "part": 1.0}]})
+    from . import settings
+    from .listings_bt import BYBIT_REPORT
+    if settings.effective(cfg, conn)["listings"].get("bybit") and BYBIT_REPORT.exists():
+        lc = cfg["listings"]
+        for t in json.loads(BYBIT_REPORT.read_text()).get("trades", []):
+            listing.append({"kind": "listing", "exchange": "bybit", "symbol": t["symbol"], "side": "short",
+                            "entry_time": t["entry_t"] // 1000, "exit_time": None if t["reason"] == "open" else t["exit_t"] // 1000,
+                            "entry": t["entry"], "exit": t["exit"], "stop": t["entry"] * (1 + lc["stop_pct"] / 100),
+                            "size_pct": lc["notional_pct"], "move_pct": round(-(t["exit"] / t["entry"] - 1) * 100, 2),
+                            "result_pct": t["pnl_pct"], "open": t["reason"] == "open",
+                            "exits": [] if t["reason"] == "open" else
+                            [{"what": {"stop": "sl"}.get(t["reason"], t["reason"]), "t": t["exit_t"] // 1000, "price": t["exit"], "part": 1.0}]})
     items = sorted(trend + hourly + listing, key=lambda x: x["entry_time"])
     days = (e - s) / DAY
     return {"generated": int(time.time()), "period": [start, time.strftime("%Y-%m-%d", time.gmtime(e / 1000))],
             "items": items, "summary": {"all": summary(items, days), "trend": summary(trend, days),
                                         "capitulation": summary(hourly, days), "listing": summary(listing, days)},
-            "plan": plan_cfg(pc), "trend_equity": equity_stats(trend)}
+            "plan": plan_cfg(pc), "trend_equity": equity_stats(trend), "paths": paths(conn, trend, hourly, CL)}
 
 
 def _clean(x):

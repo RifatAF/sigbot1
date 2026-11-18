@@ -153,8 +153,8 @@ async def run(cfg, conn):
     from .portfolio import LivePortfolio
     port = LivePortfolio(cfg, conn, pub)
     from .listings import ListingShorts
-    from .sources import Binance
-    lst = ListingShorts(cfg, conn, pub, Binance(http))
+    from .sources import Binance, Bybit
+    lst = ListingShorts(cfg, conn, pub, Binance(http), Bybit(http))
     col = Collector(cfg, conn, http)
 
     say = lambda m: print(m, flush=True)

@@ -80,6 +80,7 @@ label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center;cu
 <div id="list"></div></section>
 <section class="panel" id="detail">
 <div id="dhead"><span class="ttl" id="ttl">Выбери сигнал слева</span><span id="bdg"></span><span class="mut" id="kindname"></span>
+<label title="Полупрозрачная зона: куда обычно шла цена после прошлых сигналов этого типа. Линия: медиана, тёмная зона: половина случаев, светлая: 80%."><input type="checkbox" id="cone" checked>обычный путь</label>
 <span class="nav"><button id="prev" title="Предыдущий (←)">◀</button><button id="next" title="Следующий (→)">▶</button></span></div>
 <div class="wrap"><div id="c"></div><canvas id="ov"></canvas><div id="empty"></div></div>
 <div class="story" id="story"></div><div class="cards" id="cards"></div>
@@ -102,7 +103,7 @@ const chart = LightweightCharts.createChart($('c'), {autoSize:true, layout:{back
   localization:{priceFormatter: p => p <= 0 ? '' : px(p)}});
 const s = chart.addCandlestickSeries({upColor:G, downColor:R, borderVisible:false, wickUpColor:G, wickDownColor:R, priceLineVisible:false});
 s.applyOptions({autoscaleInfoProvider: o => { const r = o(), t = cur; if (!r || !t) return r;
-  const lv = [t.stop, t.tp1, t.tp2, t.exit_level].filter(v => v != null && v > 0); if (!lv.length) return r;
+  const lv = [t.stop, t.tp1, t.tp2, t.exit_level, ...coneEnds(t)].filter(v => v != null && v > 0); if (!lv.length) return r;
   return {priceRange:{minValue: Math.min(r.priceRange.minValue, ...lv), maxValue: Math.max(r.priceRange.maxValue, ...lv)}}; }});
 const step = () => tf==='1d' ? 86400 : 3600, snap = x => Math.floor(x/step())*step();
 function idx(t){ let lo=0, hi=times.length; while(lo<hi){const m=(lo+hi)>>1; if(times[m]<t) lo=m+1; else hi=m;} return lo; }
@@ -129,8 +130,9 @@ function draw(){
   lvl(t.tp2, 'TP2', G, [5,3]); lvl(t.tp1, 'TP1', G, [5,3]); lvl(t.stop, 'Стоп', R, [5,3]);
   hline(x1, x2, ye, B); chips.push([ye, 'Вход ' + px(t.entry), '#7aa7ff']);
   if (t.open && t.exit_level) { hline(x1, W, y(t.exit_level), '#ffd27a', [2,3]); chips.push([y(t.exit_level), 'Слом тренда ' + px(t.exit_level), '#ffd27a']); }
+  const cx = drawCone(t, y, chips) || 0;
   chips.sort((a,b) => a[0]-b[0]); for (let i = 1; i < chips.length; i++) if (chips[i][0] - chips[i-1][0] < 22) chips[i][0] = chips[i-1][0] + 22;
-  chips.forEach(([yy, txt, col]) => chip(x2 + 6, yy, txt, col));
+  chips.forEach(([yy, txt, col]) => chip(Math.max(x2, cx) + 6, yy, txt, col));
 }
 const redraw = () => requestAnimationFrame(draw);
 chart.timeScale().subscribeVisibleLogicalRangeChange(redraw); chart.timeScale().subscribeSizeChange(redraw); new ResizeObserver(redraw).observe($('c'));
@@ -145,8 +147,33 @@ async function showChart(t){
     m.push({time:snap(e.t), position: (good === L) ? 'aboveBar' : 'belowBar', color: good ? G : R, shape:'circle', size:1, text: WHAT[e.what] || e.what}); }
   s.setMarkers(m.filter(x => times.length && x.time >= times[0] && x.time <= times[times.length-1]).sort((a,b)=>a.time-b.time));
   $('empty').style.display = cs.length ? 'none' : 'flex'; $('empty').textContent = 'Нет свечей по монете: история ещё загружается.';
-  const end = t.exit_time || times[times.length-1], span = Math.max(end - t.entry_time, step()*(tf==='1d'?20:16));
-  chart.timeScale().setVisibleLogicalRange({from: idx(t.entry_time - span*0.6), to: idx(end + span*0.5) + 12}); redraw();
+  const cn = coneOf(t), cend = cn ? t.entry_time + cn.n*cn.P.step : 0;
+  const end = Math.max(t.exit_time || times[times.length-1], cend), span = Math.max(end - t.entry_time, step()*(tf==='1d'?20:16));
+  const lg = x => { const i = idx(snap(x)); return i < times.length ? i : times.length-1 + (snap(x)-times[times.length-1])/step(); };
+  chart.timeScale().setVisibleLogicalRange({from: lg(t.entry_time - span*0.6), to: lg(end + span*0.15) + 14}); redraw();
+}
+// ---------- обычный путь цены: медиана и разброс прошлых сигналов этого типа (не прогноз конкретной монеты)
+function coneOf(t){
+  const P = (F.paths||{})[t.kind]; if (!P || !$('cone').checked) return null;
+  const sd = t.side==='long' ? 1 : -1;
+  const u = P.unit==='atr' ? (t.atr ?? (t.tp1!=null ? Math.abs(t.tp1-t.entry)/((F.plan||{}).tp1_atr||2) : null))
+          : P.unit==='risk' ? (t.stop!=null ? Math.abs(t.entry-t.stop) : null) : t.entry/100;
+  if (!u) return null;
+  const price = q => t.entry + sd*q*u;
+  return {P, price, n: P.q['50'].length};
+}
+function coneEnds(t){ const c = coneOf(t); if (!c) return []; const k = c.n-1; return [c.price(c.P.q['25'][k]), c.price(c.P.q['75'][k])]; }
+function drawCone(t, y, chips){
+  const c = coneOf(t); if (!c) return;
+  const X = k => xOf(t.entry_time + (t.kind==='capitulation' ? 3600 : 0) + k*c.P.step), ks = [...Array(c.n).keys()];
+  const band = (lo, hi, a) => { g.fillStyle = `rgba(170,150,255,${a})`; g.beginPath();
+    ks.forEach(k => g.lineTo(X(k), y(c.price(c.P.q[hi][k])))); ks.slice().reverse().forEach(k => g.lineTo(X(k), y(c.price(c.P.q[lo][k])))); g.closePath(); g.fill(); };
+  band('10','90',.07); band('25','75',.13);
+  g.strokeStyle='rgba(190,175,255,.9)'; g.lineWidth=1.6; g.setLineDash([6,4]); g.beginPath(); ks.forEach(k => g.lineTo(X(k), y(c.price(c.P.q['50'][k])))); g.stroke(); g.setLineDash([]);
+  const k = c.n-1, med = c.price(c.P.q['50'][k]);
+  const endX = X(k);
+  chips.push([y(med), `Обычно через ${t.kind==='capitulation' ? k+' ч' : k+' дн.'}: ${px(med)} ${sg(pctFrom(t,med))}`, '#bfb0ff']);
+  return endX;
 }
 // ---------- карточка сделки: план и что произошло с каждым уровнем
 const WHAT = {tp1:'TP1', tp2:'TP2', sl:'Стоп', be:'Безубыток', trend:'Тренд сломался', time:'По времени', delist:'Делистинг', invalid:'Идея сломалась', trail:'Трейлинг', manual:'Вручную'};
@@ -186,7 +213,8 @@ async function select(t){
   cur = t; renderList(false);
   $('ttl').textContent = coin(t.symbol); $('bdg').innerHTML = `<span class="badge ${t.side}">${t.side==='long'?'LONG':'SHORT'}</span>`;
   $('kindname').textContent = KIND[t.kind] + ' · ' + when(t, t.entry_time) + (t.kind==='capitulation' ? ' UTC' : '') + (t.open ? ' · открыта' : '');
-  $('story').innerHTML = ticket(t) + `<div class="why">${why(t)}</div>`; $('cards').innerHTML = '';
+  const P = (F.paths||{})[t.kind];
+  $('story').innerHTML = ticket(t) + `<div class="why">${why(t)}${P ? `<br><br>Сиреневая зона на графике: куда обычно шла цена после ${P.n} прошлых сигналов этого типа. Пунктир: медиана, тёмная зона: половина случаев, светлая: 8 из 10. Это статистика, а не прогноз этой монеты.` : ''}</div>`; $('cards').innerHTML = '';
   const i = view.indexOf(t); $('prev').disabled = i >= view.length-1; $('next').disabled = i <= 0;
   await showChart(t);
 }
@@ -227,6 +255,7 @@ document.querySelectorAll('[data-src]').forEach(b => b.onclick = () => { S.sourc
 document.querySelectorAll('#kinds button').forEach(b => b.onclick = () => setKind(b.dataset.k));
 document.querySelectorAll('#how div').forEach(b => b.onclick = () => setKind(b.dataset.k));
 $('q').oninput = e => { S.text = e.target.value.trim().toLowerCase(); filter(); renderList(); };
+$('cone').onchange = () => { chart.priceScale('right').applyOptions({autoScale:true}); redraw(); if (cur) showChart(cur); };
 $('onlyOpen').onchange = e => { S.open = e.target.checked; filter(); renderList(); };
 const move = d => { const i = view.indexOf(cur) + d; if (i >= 0 && i < view.length) { select(view[i]); const el = document.querySelector('.row.sel'); el && el.scrollIntoView({block:'nearest'}); } };
 $('prev').onclick = () => move(1); $('next').onclick = () => move(-1);
@@ -709,7 +738,11 @@ def make_app(cfg, conn) -> web.Application:
                 return web.json_response({"items": [], "summary": {}, "note": autoprep.STATUS.get("text") or "ещё не посчитана"})
             return web.json_response(json.loads(fd.FEED.read_text()))
         items = live_feed()
-        return web.json_response({"items": items, "summary": {"all": fd.summary(items, 30)}})
+        extra = {}
+        if fd.FEED.exists():
+            bt = json.loads(fd.FEED.read_text())
+            extra = {"paths": bt.get("paths", {}), "plan": bt.get("plan")}
+        return web.json_response({"items": items, "summary": {"all": fd.summary(items, 30)}, **extra})
 
     async def status(_):
         from . import autoprep

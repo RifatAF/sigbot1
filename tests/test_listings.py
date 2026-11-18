@@ -59,3 +59,51 @@ async def test_hot_listing_is_filtered(cfg, conn, tg):
     ls = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), FakeBN(d0 * DAY, bars))
     assert await ls.run_daily((d0 + 2) * DAY) == []
     assert conn.execute("SELECT status FROM listing_trades").fetchone()[0] == "filtered"
+
+
+class FakeHttp:
+    def __init__(self, pages):
+        self.pages, self.calls = pages, []
+
+    async def get_json(self, url, params=None, headers=None):
+        self.calls.append((url, params))
+        return self.pages[url.split("/v5")[1]](params)
+
+
+@pytest.mark.asyncio
+async def test_bybit_source_parses_v5():
+    from sigbot.sources import Bybit
+    lst = {"retCode": 0, "result": {"list": [
+        {"symbol": "NEWUSDT", "contractType": "LinearPerpetual", "quoteCoin": "USDT", "status": "Trading", "launchTime": "1700000000000"},
+        {"symbol": "OLDUSDC", "contractType": "LinearPerpetual", "quoteCoin": "USDC", "status": "Trading", "launchTime": "1"},
+        {"symbol": "FUTUSDT", "contractType": "LinearFutures", "quoteCoin": "USDT", "status": "Trading", "launchTime": "1"}],
+        "nextPageCursor": ""}}
+    kl = {"retCode": 0, "result": {"list": [["1700086400000", "2", "3", "1", "2.5", "10", "25"],
+                                            ["1700000000000", "1", "2", "0.5", "2", "10", "20"]]}}
+    bb = Bybit(FakeHttp({"/market/instruments-info": lambda p: lst, "/market/kline": lambda p: kl}))
+    assert await bb.perp_listings() == [("NEWUSDT", 1700000000000)]
+    k = await bb.klines("NEWUSDT", "futures", "1d", 1700000000000, 10)
+    assert k[0][0] < k[1][0] and k[1][4] == 2.5
+
+
+class FakeBB(FakeBN):
+    async def perp_listings(self):
+        return [("BYBUSDT", self.onboard), ("BOTHUSDT", self.onboard)]
+
+
+@pytest.mark.asyncio
+async def test_bybit_only_listing_is_traded(cfg, conn, tg):
+    from sigbot import settings
+    d0 = 20_000
+    onboard = d0 * DAY + 8 * 3_600_000
+    bars = [bar(d0, 1.05, 1.2, 0.9, 1.0), bar(d0 + 1, 1.0, 1.1, 0.95, 1.0)]
+    bn = FakeBN(onboard, bars)
+
+    async def bn_list():
+        return [("BOTHUSDT", onboard - 10 * DAY)]                    # на Binance раньше: с Bybit не берём
+    bn.perp_listings = bn_list
+    settings.put(conn, "listings.bybit", True)
+    ls = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), bn, FakeBB(onboard, bars))
+    await ls.run_daily((d0 + 2) * DAY + 60_000)
+    rows = conn.execute("SELECT symbol, exchange FROM listing_trades WHERE status='open'").fetchall()
+    assert [tuple(r) for r in rows] == [("BYBUSDT", "bybit")] and "Bybit" in tg.sent[-1][1]

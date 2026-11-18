@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import csv
 import io
 import json
 import logging
 import re
+import time
 import zipfile
 from pathlib import Path
 
@@ -120,3 +122,70 @@ def backtest(D: dict, lc: dict, fee_pct: float, start_ms: int, end_ms: int, excl
                        "exit": float(exit_px), "reason": reason,
                        "pnl_pct": round((-(exit_px / e - 1) * 100 - 2 * fee_pct) * n, 3)})
     return pnl, trades
+
+
+BYBIT_CACHE = Path("data/listings_bybit.json")
+BYBIT_REPORT = Path("reports/listings_bybit.json")
+
+
+async def _download_bybit(binance_first: dict) -> dict:
+    """Дневные свечи первых 100 дней всех перпетуалов Bybit, которых не было на Binance к их запуску на Bybit."""
+    from .http import Http
+    from .sources import Binance, Bybit
+    http = Http()
+    try:
+        bb = Bybit(http)
+        try:
+            for s, t in await Binance(http).perp_listings():        # свежие листинги Binance, которых ещё нет в архиве
+                binance_first.setdefault(s, t)
+        except Exception:
+            pass
+        sem, out = asyncio.Semaphore(8), {}
+
+        async def one(sym, launch):
+            if launch <= 0 or (sym in binance_first and binance_first[sym] <= launch + 2 * DAY):
+                return
+            async with sem:
+                try:
+                    k = await bb.klines(sym, "futures", "1d", launch // DAY * DAY, 100)
+                except Exception as e:
+                    log.info("bybit %s: %s", sym, e)
+                    return
+            if k:
+                out[sym] = {"launch": launch, "rows": [[t, o, h, l, c, v] for t, o, h, l, c, v, _ in k]}
+        await asyncio.gather(*(one(s, t) for s, t in await bb.perp_listings()))
+        return out
+    finally:
+        await http.close()
+
+
+def bybit_summary(trades: list[dict]) -> dict:
+    done = [t for t in trades if t["reason"] != "open"]
+    res = [t["pnl_pct"] for t in done]
+    years: dict = {}
+    for t in done:
+        y = time.strftime("%Y", time.gmtime(t["exit_t"] / 1000))
+        years[y] = round(years.get(y, 0) + t["pnl_pct"], 1)
+    return {"trades": len(trades), "closed": len(done), "win_pct": round(100 * sum(r > 0 for r in res) / len(res)) if res else 0,
+            "avg_pct": round(float(np.mean(res)), 2) if res else 0, "sum_pct": round(float(np.sum(res)), 1),
+            "stops": sum(t["reason"] == "stop" for t in done), "years": years}
+
+
+def bybit_report(cfg) -> dict:
+    """Бэктест шорта листингов Bybit теми же правилами. Bybit отдаёт только монеты, что торгуются сейчас:
+    делистнутые (обычно упавшие) не попадают, значит результат скорее занижен."""
+    D = load()
+    first = {s: int(v[0][0]) for s, v in D.items() if v}
+    B = asyncio.run(_download_bybit(first))
+    BYBIT_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    BYBIT_CACHE.write_text(json.dumps(B))
+    lc = cfg["listings"]
+    _, trades = backtest({s: x["rows"] for s, x in B.items()}, lc, cfg["trade"]["fee_taker_pct"],
+                         calendar.timegm(time.strptime(cfg["backtest"]["start"], "%Y-%m-%d")) * 1000, int(time.time() * 1000))
+    for t in trades:
+        t["exchange"] = "bybit"
+    rep = {"generated": int(time.time()), "coins": len(B), "summary": bybit_summary(trades),
+           "trades": sorted(trades, key=lambda x: -x["entry_t"])}
+    BYBIT_REPORT.parent.mkdir(exist_ok=True)
+    BYBIT_REPORT.write_text(json.dumps(rep))
+    return rep

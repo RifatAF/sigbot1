@@ -366,10 +366,12 @@ def trend_open_list(rows: list[dict], mode: str, lang: str = "en") -> tuple[str,
     return "\n".join(lines), f.numbers
 
 
-def listing_signal(symbol: str, entry: float, stop: float, lc: dict, mode: str, lang: str = "en") -> tuple[str, list[float]]:
+def listing_signal(symbol: str, entry: float, stop: float, lc: dict, mode: str, lang: str = "en",
+                   exchange: str = "binance") -> tuple[str, list[float]]:
     f, ru = Fmt(), lang == "ru"
+    exn = "Bybit" if exchange == "bybit" else "Binance"
     lines = [f"🔴 <b>{_coin(symbol)} · {_side('short', lang)}</b>  #{_coin(symbol)}",
-             "Новый листинг" if ru else "New listing", "",
+             (f"Новый листинг на {exn}" if ru else f"New listing on {exn}"), "",
              f"{'Вход' if ru else 'Entry'}: <b>{f.p(entry)}</b>",
              f"🛑 {'Стоп' if ru else 'Stop'}: {f.p(stop)} ({_pct(f, 'short', entry, stop)})",
              f"⏳ {'Выход' if ru else 'Exit'}: " + (f"через {f.i(lc['hold_days'])} дней, целей нет" if ru else

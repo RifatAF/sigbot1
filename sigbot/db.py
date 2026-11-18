@@ -130,6 +130,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     _add_columns(conn, "trend_signals", {"stop": "REAL", "tp1": "REAL", "tp2": "REAL", "state": "TEXT"})
+    _add_columns(conn, "listing_trades", {"exchange": "TEXT DEFAULT 'binance'"})
     return conn
 
 

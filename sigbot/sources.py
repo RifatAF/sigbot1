@@ -20,6 +20,46 @@ def parse_klines(raw: list) -> list[tuple]:
             for k in raw]
 
 
+BYBIT = "https://api.bybit.com"
+
+
+class Bybit:
+    """Открытый API Bybit v5 без ключей: список линейных перпетуалов с датой запуска и свечи."""
+
+    def __init__(self, http: Http):
+        self.http = http
+
+    async def _get(self, path: str, params: dict) -> dict:
+        d = await self.http.get_json(BYBIT + path, params=params)
+        if not isinstance(d, dict) or d.get("retCode", 0) != 0:
+            raise RuntimeError(f"bybit {path}: {str(d)[:120]}")
+        return d.get("result") or {}
+
+    async def perp_listings(self, quote: str = "USDT") -> list[tuple[str, int]]:
+        out, cursor = [], ""
+        for _ in range(20):
+            p = {"category": "linear", "limit": 1000, **({"cursor": cursor} if cursor else {})}
+            r = await self._get("/v5/market/instruments-info", p)
+            out += [(x["symbol"], int(x.get("launchTime") or 0)) for x in r.get("list", [])
+                    if x.get("contractType") == "LinearPerpetual" and x.get("quoteCoin") == quote
+                    and x.get("status") == "Trading"]
+            cursor = r.get("nextPageCursor")
+            if not cursor:
+                break
+        return out
+
+    async def klines(self, symbol: str, market: str, interval: str, start_ms: int | None = None,
+                     limit: int = 200) -> list[tuple]:
+        """Тот же формат, что у Binance: (ts, o, h, l, c, volume, 0), по возрастанию времени."""
+        step = {"1d": 86_400_000, "1h": 3_600_000}[interval]
+        p = {"category": "linear", "symbol": symbol, "interval": {"1d": "D", "1h": "60"}[interval], "limit": min(limit, 1000)}
+        if start_ms is not None:
+            p.update(start=int(start_ms), end=int(start_ms) + min(limit, 1000) * step)
+        r = await self._get("/v5/market/kline", p)
+        return sorted((int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), 0.0)
+                      for k in r.get("list", []))
+
+
 class Binance:
     def __init__(self, http: Http):
         self.http = http
