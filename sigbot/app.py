@@ -100,6 +100,21 @@ async def auto_update(pub):
             log.warning("auto update check: %s", e)
 
 
+async def heartbeat(conn, leader):
+    """Раз в 5 минут короткая строка в консоль: видно, что бот жив и что он делает."""
+    while True:
+        await asyncio.sleep(300)
+        now = int(time.time() * 1000)
+        last = conn.execute("SELECT MAX(ts) FROM candles WHERE tf='1h' AND market='futures'").fetchone()[0]
+        age = f"{(now - last) // 60000 - 60} мин назад" if last else "нет"
+        scan = settings.get(conn, "last_scan") or {}
+        posts = conn.execute("SELECT COUNT(*) FROM posts WHERE ts>?", (now - DAY,)).fetchone()[0]
+        role = "основной" if leader and leader.is_main else "запасной" if leader else "без Telegram"
+        print(f"{time.strftime('%H:%M')} работаю ({role}): последняя часовая свеча закрылась {age}, "
+              f"последний скан {time.strftime('%H:%M', time.gmtime(scan['ts'] / 1000)) + ' UTC' if scan.get('ts') else 'ещё не было'}, "
+              f"кандидатов {scan.get('candidates', 0)}, постов за сутки {posts}", flush=True)
+
+
 async def run(cfg, conn):
     http = Http()
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -127,8 +142,17 @@ async def run(cfg, conn):
     lst = ListingShorts(cfg, conn, pub, Binance(http))
     col = Collector(cfg, conn, http)
 
-    runner = await dashboard.serve(cfg, conn)
-    log.info("dashboard on http://%s:%s", cfg["dashboard"]["host"], cfg["dashboard"]["port"])
+    say = lambda m: print(m, flush=True)
+    say("\n=== sigbot запускается ===")
+    try:
+        runner = await dashboard.serve(cfg, conn)
+    except OSError:
+        say(f"❌ Порт {cfg['dashboard']['port']} занят: бот уже запущен в другом окне "
+            "(run_sigbot.bat, автозапуск или второй VS Code). Закрой его и запусти снова.")
+        await http.close()
+        raise SystemExit(1)
+    say(f"✅ Панель: http://{cfg['dashboard']['host']}:{cfg['dashboard']['port']}  (обзор: /overview)")
+    say(f"✅ Telegram: {'основной экземпляр' if leader and leader.is_main else 'запасной, в канал не пишет' if leader else 'нет токена, посты не уходят'}")
     tasks = [asyncio.create_task(_guard(fn.__name__, fn)) for fn in col.tasks()]
     tasks.append(asyncio.create_task(_guard("auto_update", lambda: auto_update(pub))))
     tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port, lst))))
@@ -138,6 +162,9 @@ async def run(cfg, conn):
         tasks.append(asyncio.create_task(_guard("admin", admin.loop)))
         tasks.append(asyncio.create_task(_guard("leader", leader.loop)))
         await pub.notify_owner(f"sigbot started on {leader.name} as main. /menu for settings.")
+    tasks.append(asyncio.create_task(_guard("heartbeat", lambda: heartbeat(conn, leader))))
+    say("✅ Сборщик, сканер, портфель, листинги и админка работают.")
+    say("Бот не завершается сам: это служба. Раз в 5 минут здесь строка «работаю». Остановить: Ctrl+C или Shift+F5.\n")
     try:
         await asyncio.gather(*tasks)
     finally:
