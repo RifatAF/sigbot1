@@ -84,6 +84,11 @@ async def run(cfg, conn):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     channel = os.environ.get("TELEGRAM_CHANNEL_ID")
     owner = os.environ.get("TELEGRAM_OWNER_ID")
+    if os.environ.get("SIGBOT_ROLE", "main").lower() == "standby":
+        # запасной экземпляр: собирает данные и считает сигналы в свой журнал, но не пишет в канал и не слушает
+        # бота (два опроса одного токена Telegram конфликтуют, а два экземпляра дублировали бы посты)
+        log.warning("SIGBOT_ROLE=standby: Telegram выключен, только сбор данных и журнал")
+        token = channel = owner = None
     tg = Telegram(token, http) if token else None
     lc = cfg["llm"]
     llm = Gemini(os.environ.get("GEMINI_API_KEY"), http, lc["model"], lc["fallback_model"], lc["timeout_s"])
