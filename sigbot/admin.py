@@ -281,13 +281,32 @@ class Admin:
             author = fo["sender_user"].get("username") or fo["sender_user"].get("first_name")
         elif fo.get("type") == "hidden_user":
             author = fo.get("sender_user_name")
-        await self.tg.send_message(chat, "Reading…", parse_mode=None)
-        data = await self.llm.extract_call(text or None, image) if self.llm else None
-        cid = self.bl.add_draft(data or {}, author)
-        if not cid:
-            return await self.tg.send_message(chat, "Couldn't find a coin with price levels there.", parse_mode=None)
-        call = self.bl.get(cid)
-        await self.tg.send_message(chat, "Extracted:\n\n" + Bloggers.describe(call) + "\n\nSave it?",
+        await self.tg.send_message(chat, "Читаю… до минуты. Меню при этом работает.", parse_mode=None)
+        # разбор в фоне: пока нейросеть думает, бот отвечает на команды
+        asyncio.create_task(self._extract(chat, text, image, author))
+
+    async def _extract(self, chat, text, image, author):
+        try:
+            data = await self.llm.extract_call(text or None, image) if self.llm else None
+            why = None if data else (getattr(self.llm, "last_error", None) or "нейросеть не нашла уровней")
+            if not data and text:
+                from .bloggers import parse_text
+                data = parse_text(text)              # простой разбор без нейросети
+            cid = self.bl.add_draft(data or {}, author)
+            if not cid:
+                return await self.tg.send_message(
+                    chat, "Не нашёл монету с ценами (вход, стоп, цели или уровни)." +
+                    (f"\nПричина: {why}." if why else "") +
+                    ("\nСкриншоты без нейросети не читаются." if image and why else ""), parse_mode=None)
+            call = self.bl.get(cid)
+            await self._ask_confirm(chat, cid, call, why)
+        except Exception as e:
+            log.exception("extract")
+            await self.tg.send_message(chat, f"Не получилось разобрать: {str(e)[:150]}", parse_mode=None)
+
+    async def _ask_confirm(self, chat, cid, call, why=None):
+        await self.tg.send_message(chat, ("Разобрал без нейросети (" + why + "):\n\n" if why else "Извлёк:\n\n") +
+                                   Bloggers.describe(call) + "\n\nСохранить?",
                                    reply_markup=kb([[("✅ Confirm", f"bl_ok:{cid}"), ("✖️ Drop", f"bl_no:{cid}")]]),
                                    parse_mode=None)
 

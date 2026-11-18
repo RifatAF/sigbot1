@@ -22,6 +22,36 @@ def normalize_symbol(s: str | None) -> str | None:
     return s if s.endswith("USDT") else s + "USDT"
 
 
+def parse_text(text: str) -> dict | None:
+    """Разбор без нейросети: тикер и цены по словам вход/стоп/цель (рус и англ). Для простых постов хватает."""
+    import re
+    if not text:
+        return None
+    t = re.sub(r"(\d),(\d)", r"\1.\2", text)
+    m = re.search(r"#?\$?\b([A-Z]{2,10})(?:/?USDT|USD|\.P|PERP)?\b", text.upper())
+    skip = {"LONG", "SHORT", "TP", "SL", "USDT", "USD", "ENTRY", "STOP", "TARGET", "BUY", "SELL", "THE", "AND"}
+    syms = [x for x in re.findall(r"#?\$?\b([A-Z]{2,10})(?:/?USDT|\.P|PERP)?\b", text.upper()) if x not in skip]
+    if not syms:
+        return None
+    kinds = [(r"(вход|entry|buy|зона входа|open)", "entry"), (r"(стоп|stop|sl\b|stop[- ]?loss)", "stop"),
+             (r"(цел|тейк|tp\d?|take|target)", "target"), (r"(поддерж|support)", "support"), (r"(сопрот|resist)", "resistance")]
+    levels = []
+    for line in t.splitlines():
+        low = line.lower()
+        typ = next((k for rx, k in kinds if re.search(rx, low)), None)
+        if not typ:
+            continue
+        for num in re.findall(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w%]|\.\d)", line):
+            v = float(num)
+            if v > 0 and not (typ == "target" and v < 10 and re.search(r"tp\s*" + num, low)):
+                levels.append({"price": v, "type": typ})
+    if not levels:
+        return None
+    up = text.lower()
+    bias = "long" if re.search(r"\b(long|лонг|buy|покуп)", up) else "short" if re.search(r"\b(short|шорт|sell|продаж)", up) else None
+    return {"symbol": syms[0], "bias": bias, "levels": levels}
+
+
 def _parse_date(v) -> int:
     if not v:
         return _now()

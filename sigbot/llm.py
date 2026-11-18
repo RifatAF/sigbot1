@@ -1,6 +1,7 @@
 """Gemini: только текст комментариев и чтение скриншотов. Торговых решений модель не принимает."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -32,21 +33,31 @@ class Gemini:
         self.key, self.http = api_key, http
         self.models = [model, fallback_model]
         self.timeout = timeout_s
+        self.last_error: str | None = None if api_key else "нет ключа GEMINI_API_KEY в .env"
 
     async def _gen(self, parts: list, system: str, json_mode: bool = False) -> str | None:
         if not self.key:
+            self.last_error = "нет ключа GEMINI_API_KEY в .env"
             return None
         body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": parts}],
                 "generationConfig": {"temperature": 0.3}}
         if json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
+        self.last_error = None
         for m in self.models:
-            try:
-                d = await self.http.post_json(URL.format(model=m), json=body, timeout=self.timeout,
-                                              headers={"x-goog-api-key": self.key})
+            try:   # жёсткий срок на модель: без него повторы http тянулись до 10 минут и бот «зависал»
+                d = await asyncio.wait_for(self.http.post_json(URL.format(model=m), json=body, timeout=min(self.timeout, 40),
+                                                               headers={"x-goog-api-key": self.key}), timeout=45)
                 return "".join(p.get("text", "") for p in d["candidates"][0]["content"]["parts"]).strip()
+            except asyncio.TimeoutError:
+                self.last_error = "Gemini не ответил за 45 секунд (из России Google API часто закрыт: нужен VPN)"
+                log.warning("gemini %s timeout", m)
             except Exception as e:
+                msg = str(e)
+                self.last_error = ("Gemini недоступен из твоей страны: включи VPN" if "location" in msg.lower()
+                                   else "ключ Gemini не принят: проверь GEMINI_API_KEY" if "API key" in msg or "403" in msg
+                                   else f"Gemini ошибка: {msg[:120]}")
                 log.warning("gemini %s failed: %s", m, e)
         return None
 
