@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS portfolio_weights (
 CREATE TABLE IF NOT EXISTS portfolio_equity (
     day INTEGER PRIMARY KEY, equity REAL, pnl_pct REAL, gross REAL
 );
+CREATE TABLE IF NOT EXISTS paper_accounts (
+    exchange TEXT PRIMARY KEY, balance REAL, start_usd REAL, fees REAL, funding REAL, created_ts INTEGER
+);
 CREATE TABLE IF NOT EXISTS demo_trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT, exchange TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL,
     symbol TEXT NOT NULL, side TEXT NOT NULL, qty REAL, open_qty REAL, entry REAL, opened_ts INTEGER,
@@ -136,6 +139,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     _add_columns(conn, "trend_signals", {"stop": "REAL", "tp1": "REAL", "tp2": "REAL", "state": "TEXT"})
     _add_columns(conn, "listing_trades", {"exchange": "TEXT DEFAULT 'binance'"})
+    _add_columns(conn, "demo_trades", {"margin": "REAL", "leverage": "REAL", "liq": "REAL", "fees": "REAL DEFAULT 0",
+                                       "funding": "REAL DEFAULT 0", "last_funding": "INTEGER", "exit": "REAL"})
     return conn
 
 

@@ -47,6 +47,11 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
             await live.manage(now)
         except Exception as e:
             log.exception("manage: %s", e)
+        if getattr(live, "demo", None):
+            try:
+                await live.demo.tick(now)                # бумажные счета: ликвидации и фандинг
+            except Exception as e:
+                log.exception("paper: %s", e)
         hour = now // HOUR
         if hour != last_scan_hour and now % HOUR >= 2 * 60_000:
             last_scan_hour = hour

@@ -67,7 +67,7 @@ class Admin:
             [("🧾 Итоги недели", "pm"), ("📤 Сделки в Excel", "export")],
             [("🗣 Блогеры", "blog"), ("📌 Пост о методе", "method")],
             [("📈 Сделки на графике", "snaps"), ("📱 Панель на телефоне", "phone")],
-            [("🧪 Демо-счета Binance и Bybit", "demo")],
+            [("🧪 Бумажная торговля (100$)", "demo")],
             [("💻 Компьютеры", "pcs"), ("❓ Помощь", "help")],
             [("✅ Снять аварийную остановку" if p.get("kill_switch") else "⛔ Аварийная остановка", "kill")],
         ]
@@ -98,16 +98,14 @@ class Admin:
     async def demo_screen(self):
         from .demo import DemoTrader
         dt = DemoTrader(self.cfg, self.conn)
-        on = self.eff().get("demo", {}).get("enabled", False)
-        try:
-            rep = await dt.report()
-        finally:
-            for a in dt.accs:
-                await a.close()
-        text = ("🧪 <b>Демо-торговля</b> " + ("✅ вкл" if on else "❌ выкл") + "\n"
-                "Бот повторяет свои сигналы на демо-счетах бирж: настоящие ордера, виртуальные деньги. "
-                "Размер как в сигнале, цели и стоп бот закрывает сам.\n\n" + rep)
-        return text, kb([[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], self.BACK])
+        pc = self.eff().get("paper", {})
+        on = pc.get("enabled", True)
+        text = ("🧪 <b>Бумажная торговля</b> " + ("✅ вкл" if on else "❌ выкл") + "\n"
+                f"Виртуальные счета по {pc.get('start_usd', 100)}$: бот торгует свои сигналы как живой трейдер. "
+                f"Цены и комиссии бирж, плечо x{pc.get('leverage', 5)}, фандинг, ликвидация. Ордера на биржу не уходят.\n\n"
+                + await dt.report())
+        return text, kb([[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")],
+                         [("♻️ Начать заново со 100$", "demo_reset")], self.BACK])
 
     async def snaps_screen(self):
         """Открытые и последние закрытые сигналы кнопками: нажал, бот прислал картинку графика."""
@@ -355,10 +353,15 @@ class Admin:
             return
         if data == "help":
             return await self.show(chat, self.help_screen(), mid)
-        if data in ("demo", "demo_tg"):
+        if data == "demo_reset":
+            return await self.show(chat, ("Закрыть все бумажные позиции и начать заново со стартового депозита?",
+                                          kb([[("♻️ Да, заново", "demo_reset_yes"), ("Отмена", "demo")]])), mid)
+        if data in ("demo", "demo_tg", "demo_reset_yes"):
             if data == "demo_tg":
-                settings.put(self.conn, "demo.enabled", not e.get("demo", {}).get("enabled", False))
-            await self.show(chat, ("🧪 Спрашиваю биржи…", kb([self.BACK])), mid)
+                settings.put(self.conn, "paper.enabled", not e.get("paper", {}).get("enabled", True))
+            if data == "demo_reset_yes":
+                from .demo import DemoTrader
+                DemoTrader(self.cfg, self.conn).reset()
             return await self.show(chat, await self.demo_screen(), mid)
         if data == "snaps":
             return await self.show(chat, await self.snaps_screen(), mid)

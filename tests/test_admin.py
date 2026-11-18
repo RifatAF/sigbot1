@@ -84,7 +84,7 @@ def test_every_menu_button_answers_in_russian(cfg, conn):
     text, markup = adm.menu()
     assert "Режим публикации" in text
     datas = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
-    skip = {"selfcheck", "testposts:ch", "testposts:me", "export", "phone", "phone_new", "snaps", "demo"}       # ходят в сеть
+    skip = {"selfcheck", "testposts:ch", "testposts:me", "export", "phone", "phone_new", "snaps"}       # ходят в сеть
     sub = ["strat", "tg:portfolio.enabled", "thr:0.02", "risk", "rk:risk_max_pct:0.1", "sched", "sch:1", "mode", "setmode:confirm"]
 
     async def run():

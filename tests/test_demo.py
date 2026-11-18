@@ -1,74 +1,63 @@
 import asyncio
 
-from sigbot import demo, settings
-from sigbot.demo import BinanceDemo, DemoTrader, _round_step
+import pytest
+
+from sigbot import settings
+from sigbot.demo import DemoTrader
 
 
-def test_binance_signature_matches_docs_example():
-    b = BinanceDemo("k", "NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j")
-    q = b.sign({"symbol": "LTCBTC", "side": "BUY", "type": "LIMIT", "timeInForce": "GTC", "quantity": 1, "price": 0.1,
-                "recvWindow": 5000, "timestamp": 1499827319559})
-    assert q.endswith("signature=c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71")
-
-
-def test_only_demo_hosts():
-    import inspect
-    src = inspect.getsource(demo)
-    assert "fapi.binance.com" not in src.replace("demo-fapi.binance.com", "")
-    assert "api.bybit.com" not in src.replace("api-demo.bybit.com", "")
-
-
-def test_round_step():
-    assert _round_step(0.123456, 0.001) == 0.123 and _round_step(17.9, 1) == 17
-
-
-class FakeEx:
-    def __init__(self, name):
-        self.name, self.rules, self.orders = name, {"BTCUSDT": {"step": 0.001, "min_qty": 0.001, "min_notional": 5}}, []
-
-    async def load_rules(self):
-        pass
-
-    async def equity(self):
-        return 10_000.0
-
-    async def price(self, sym):
-        return 50_000.0
-
-    async def leverage(self, sym, lev):
-        pass
-
-    async def market(self, sym, side, qty, reduce=False):
-        self.orders.append((side, qty, reduce))
-        return qty, 50_000.0 if not reduce else 55_000.0
-
-
-def test_trader_opens_reduces_closes(cfg, conn):
-    ex = [FakeEx("binance"), FakeEx("bybit")]
+def make(cfg, conn, px):
     said = []
 
     async def note(t):
         said.append(t)
-    settings.put(conn, "demo.enabled", True)
-    dt = DemoTrader(cfg, conn, note, ex)
+    settings.put(conn, "paper.enabled", True)
+    return DemoTrader(cfg, conn, note, prices=lambda ex, s: px[0]), said
+
+
+def test_paper_account_trade_cycle(cfg, conn):
+    px = [100.0]
+    dt, said = make(cfg, conn, px)
 
     async def run():
-        await dt.open("trend", "7", "BTCUSDT", "long", 10)               # 10% от 10 000$ = 0.02 BTC
-        await dt.open("trend", "7", "BTCUSDT", "long", 10)               # повтор не открывает второй раз
+        await dt.open("trend", "7", "AUSDT", "long", 20)                 # 20% от 100$ = 20$ позиция, маржа 4$ при x5
+        await dt.open("trend", "7", "AUSDT", "long", 20)                 # повтор не открывает второй раз
+        px[0] = 110.0
         await dt.reduce("trend", "7", 0.25, "TP1")
+        px[0] = 120.0
         await dt.reduce("trend", "7", None, "сигнал закрыт")
-        await dt.open("listing", "NEWUSDT", "BTCUSDT", "short", 4.5, "bybit")   # только Bybit
     asyncio.run(run())
-    assert ex[0].orders == [("buy", 0.02, False), ("sell", 0.005, True), ("sell", 0.015, True)]
-    rows = conn.execute("SELECT exchange, status, realized FROM demo_trades WHERE kind='trend'").fetchall()
-    assert [(r[0], r[1]) for r in rows] == [("binance", "closed"), ("bybit", "closed")]
-    assert abs(rows[0][2] - 0.02 * 5000) < 1e-6
-    assert ex[1].orders[-1] == ("sell", 0.009, False) and len(ex[0].orders) == 3
-    assert any("Демо binance" in s for s in said)
+    rows = conn.execute("SELECT * FROM demo_trades ORDER BY exchange").fetchall()
+    assert [r["exchange"] for r in rows] == ["binance", "bybit"] and all(r["status"] == "closed" for r in rows)
+    b = rows[0]
+    assert b["margin"] == pytest.approx(4.0) and b["leverage"] == 5
+    gross = 0.25 * (20 / 100.02) * (110 * 0.9998 - 100.02) + 0.75 * (20 / 100.02) * (120 * 0.9998 - 100.02)
+    assert b["realized"] == pytest.approx(gross - b["fees"], rel=1e-6)          # все комиссии: вход и два выхода
+    acc = dt.account("binance")
+    assert acc["balance"] == pytest.approx(100 + b["realized"]) and acc["fees"] > 0
+    assert any("Бумажный Binance" in s and "итог" in s for s in said)
 
 
-def test_trader_off_without_switch(cfg, conn):
-    ex = [FakeEx("binance")]
-    settings.put(conn, "demo.enabled", False)
-    asyncio.run(DemoTrader(cfg, conn, None, ex).open("trend", "1", "BTCUSDT", "long", 10))
-    assert ex[0].orders == []
+def test_paper_min_size_margin_and_liquidation(cfg, conn):
+    px = [100.0]
+    dt, said = make(cfg, conn, px)
+
+    async def run():
+        await dt.open("trend", "1", "AUSDT", "long", 3)                  # 3$ меньше минимума 5$
+        await dt.open("listing", "X", "BUSDT", "short", 50, "bybit")     # только Bybit
+        px[0] = 125.0                                                    # шорт x5: +25% это ликвидация
+        await dt.tick()
+    asyncio.run(run())
+    assert conn.execute("SELECT COUNT(*) FROM demo_trades WHERE symbol='AUSDT'").fetchone()[0] == 0
+    r = conn.execute("SELECT * FROM demo_trades WHERE symbol='BUSDT'").fetchone()
+    assert r["exchange"] == "bybit" and r["status"] == "closed" and r["realized"] < -9.9
+    assert any("ликвидация" in s for s in said) and any("меньше минимума" in s for s in said)
+
+
+def test_paper_reset_and_report(cfg, conn):
+    dt, _ = make(cfg, conn, [100.0])
+    asyncio.run(dt.open("trend", "1", "AUSDT", "long", 20))
+    text = asyncio.run(dt.report())
+    assert "Binance" in text and "от 100$" in text
+    dt.reset()
+    assert dt.account("binance")["balance"] == 100
