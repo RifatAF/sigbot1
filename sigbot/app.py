@@ -36,6 +36,11 @@ async def _guard(name, coro_fn):
 async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
     """Скан в :02 каждого часа, ведение сделок каждую минуту, ежедневная заметка, недельные посты."""
     last_scan_hour = settings.get(conn, "sched_last_scan_hour", 0)
+    if port:
+        try:
+            await port.manage(int(time.time() * 1000))     # сразу при запуске: стоп и цели для открытых сигналов тренда
+        except Exception as e:
+            log.exception("trend targets: %s", e)
     while True:
         now = int(time.time() * 1000)
         try:

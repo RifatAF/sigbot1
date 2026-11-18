@@ -102,11 +102,15 @@ async def run(cfg, conn, http):
             name = s.replace("USDT", "")
             if not conn.execute("SELECT 1 FROM open_interest WHERE symbol=? AND ts<? LIMIT 1", (s, now - 60 * 86_400_000)).fetchone():
                 arc, end_d = Archive(http, conn), date.today() - timedelta(days=1)
-                exp = Archive.expected_files(t0, end_d)
-                job = asyncio.create_task(arc.symbol_all(s, t0, end_d))
+                s0 = t0                                      # молодая монета: архив с даты листинга, а не с 2020 года
+                if s in listed:
+                    s0 = max(t0, date.fromtimestamp(listed[s] / 1000) - timedelta(days=1))
+                exp = Archive.expected_files(s0, end_d)
+                job = asyncio.create_task(arc.symbol_all(s, s0, end_d))
                 while not job.done():               # полоса двигается по мере скачивания файлов
+                    exp = max(exp, arc.done + 1)
                     k = min(arc.done / exp, 1)
-                    _set("work", f"История {name} ({i}/{len(todo)}): архив Binance, файлов {arc.done} из ~{exp}",
+                    _set("work", f"История {name} ({i}/{len(todo)}): архив Binance с {s0:%d.%m.%Y}, файлов {arc.done} из ~{exp}",
                          3 + 67 * (i - 1 + 0.8 * k) / len(todo), quiet=True)
                     await asyncio.wait({job}, timeout=2)
                 await job

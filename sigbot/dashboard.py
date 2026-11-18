@@ -128,7 +128,7 @@ function draw(){
   const lvl = (p, name, col, dash) => { if (p == null) return; hline(x1, x2, y(p), col, dash); chips.push([y(p), `${name} ${px(p)}  ${sg(pctFrom(t,p))}`, col]); };
   lvl(t.tp2, 'TP2', G, [5,3]); lvl(t.tp1, 'TP1', G, [5,3]); lvl(t.stop, 'Стоп', R, [5,3]);
   hline(x1, x2, ye, B); chips.push([ye, 'Вход ' + px(t.entry), '#7aa7ff']);
-  if (t.open && t.exit_level) { hline(x1, W, y(t.exit_level), '#ffd27a', [2,3]); chips.push([y(t.exit_level), 'Выход по тренду ' + px(t.exit_level), '#ffd27a']); }
+  if (t.open && t.exit_level) { hline(x1, W, y(t.exit_level), '#ffd27a', [2,3]); chips.push([y(t.exit_level), 'Слом тренда ' + px(t.exit_level), '#ffd27a']); }
   chips.sort((a,b) => a[0]-b[0]); for (let i = 1; i < chips.length; i++) if (chips[i][0] - chips[i-1][0] < 22) chips[i][0] = chips[i-1][0] + 22;
   chips.forEach(([yy, txt, col]) => chip(x2 + 6, yy, txt, col));
 }
@@ -155,11 +155,13 @@ const when = (t, ts) => ts ? (t.kind==='capitulation' ? dt(ts) : day(ts)) : '';
 const part = x => x ? Math.round(x*100) + '%' : '';
 function path(t){                                           // короткий итог для списка: TP1 → TP2 → тренд
   const ex = (t.exits||[]).map(e => e.what==='sl' ? '❌ Стоп' : e.what==='tp1'||e.what==='tp2' ? '✅ '+WHAT[e.what] : WHAT[e.what]||e.what);
+  if (!ex.length && !t.open && t.exit_reason) ex.push(t.exit_reason);
   if (t.open) ex.push('⏳ идёт'); return ex.join(' → ') || '—';
 }
 function why(t){
   const L = t.side==='long';
-  if (t.kind==='trend') return `Почему: тренд ${L?'вверх':'вниз'} на дневках подтвердили почти все сигналы (каналы 10–160 дней и средние). Размер ${t.size_pct}% депозита.`;
+  if (t.kind==='trend') return `Почему: тренд ${L?'вверх':'вниз'} на дневках подтвердили почти все сигналы (каналы 10–160 дней и средние). Размер ${t.size_pct}% депозита. `+
+    `Как выходим: стоп и цели срабатывают сразу, когда цена их касается. Остаток закрываем по «слому тренда»: это цена, при закрытии дня ${L?'ниже':'выше'} которой тренд считается законченным. Она пересчитывается каждый день и идёт за ценой, поэтому обычно срабатывает раньше стопа и забирает часть прибыли.`;
   if (t.kind==='listing') return `Почему: новая монета на фьючерсах, первый день закрылся ниже открытия. Новые монеты обычно дешевеют первые недели. Размер ${t.size_pct}% депозита, без целей, выход через 60 дней или по стопу.`;
   return `Почему: резкий слив с падением открытого интереса, позиции вынесло, продавцы выдохлись. Риск ${t.risk_pct?.toFixed(1)}% депозита.`;
 }
@@ -172,7 +174,8 @@ function ticket(t){
     rows.push(['Стоп', px(t.stop), sg(pctFrom(t,t.stop)), e ? `❌ сработал ${when(t,e.t)}${e.part && e.part < 1 ? ', закрыто '+part(e.part) : ''}` : t.open ? 'стоит' : 'не задет', 'cs', e ? 'bad' : 'miss']); }
   const fin = ex.find(e => !['tp1','tp2','sl'].includes(e.what));
   if (fin) rows.push([`Остаток ${part(fin.part)}`, px(fin.price), sg(pctFrom(t,fin.price)), `${WHAT[fin.what]||fin.what} · ${when(t,fin.t)}`, '', pctFrom(t,fin.price) > 0 ? 'hit' : 'bad']);
-  else if (t.open && t.kind==='trend') rows.push([`Остаток ${part(t.rem ?? 1)}`, px(t.exit_level), '', `держим, пока жив тренд: выход, если день закроется ${t.side==='long'?'ниже':'выше'}`, '', 'miss']);
+  else if (t.open && t.kind==='trend') rows.push([`Остаток ${part(t.rem ?? 1)}`, px(t.exit_level), t.exit_level ? sg(pctFrom(t,t.exit_level)) : '',
+    `слом тренда: закроем, если день закроется ${t.side==='long'?'ниже':'выше'} ${px(t.exit_level)} (жёлтая линия, двигается за ценой)`, '', 'miss']);
   else if (t.open && t.kind==='listing') rows.push(['Выход', '', '', 'через 60 дней после входа или по стопу', '', 'miss']);
   const res = t.result_pct, R = t.kind==='capitulation' && t.r != null ? ` · ${t.r>0?'+':''}${t.r.toFixed(2)}R` : '';
   const total = res == null ? 'считается' : `<b class="${res>0?'pos':'neg'}">${sg(res,2)} депозита</b>${t.move_pct!=null ? ` <span class="mut">(цена в среднем ${sg(t.move_pct,1)})</span>` : ''}${R}`;
