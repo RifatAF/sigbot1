@@ -59,3 +59,22 @@ async def test_live_portfolio_daily(cfg, conn, tg):
     assert await lp.run_daily(last, list(C)) is None                    # тот же день второй раз не считается
     assert await lp.run_daily(last + DAY, list(C)) in (None, "sent")
     assert conn.execute("SELECT COUNT(*) FROM portfolio_equity").fetchone()[0] == 2
+
+
+def test_negative_funding_long_and_consensus(cfg):
+    C, V, FR = frames()
+    FR.iloc[300, 1] = -0.002                                     # шорты переполнены по BUSDT
+    fc = cfg["portfolio"]["neg_funding"]
+    nf = portfolio.neg_funding_weights(C, FR, fc, C.columns)
+    assert nf["BUSDT"].iloc[300:303].tolist() == [pytest.approx(fc["size"] / 3)] * 3 and nf["BUSDT"].iloc[303] == 0
+    W = portfolio.weights(C, V, cfg["portfolio"], FR=FR)
+    assert W["BUSDT"].iloc[301] > portfolio.trend_weights(C, V, cfg["portfolio"])["BUSDT"].iloc[301]
+
+
+def test_live_funding_daily_from_predicted(cfg, conn):
+    rows = [("AUSDT", 1000 * 300_000, -0.0004) for _ in range(1)]
+    conn.executemany("INSERT INTO funding VALUES (?,?,?)", [("AUSDT", i * 300_000, -0.0004) for i in range(288)])
+    conn.executemany("INSERT INTO candles VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     [("AUSDT", "futures", "1h", h * 3_600_000, 1, 1, 1, 1, 1, 0.5) for h in range(24)])
+    C, V, FR = portfolio.daily_frames(conn, ["AUSDT"], 0, DAY)
+    assert FR.iloc[0, 0] == pytest.approx(-0.0012)               # прогноз каждые 5 минут: среднее × 3, а не сумма 288 строк

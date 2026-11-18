@@ -35,7 +35,10 @@ def daily_frames(conn, symbols: list[str] | None, start: int, end: int):
     V = d.qv.unstack(0).reindex(C.index)
     fr = pd.read_sql_query("SELECT symbol, ts, rate FROM funding WHERE ts>=? AND ts<?", conn, params=(start, end))
     fr["day"] = fr.ts // DAY * DAY
-    FR = fr.groupby(["day", "symbol"]).rate.sum().unstack().reindex(index=C.index, columns=C.columns).fillna(0)
+    g = fr.groupby(["day", "symbol"]).rate
+    # архив: одна строка на расчёт (сумма за сутки); живой сборщик пишет прогноз каждые 5 минут: среднее × 3 расчёта
+    daily = g.sum().where(g.count() <= 6, g.mean() * 3)
+    FR = daily.unstack().reindex(index=C.index, columns=C.columns).fillna(0)
     return C, V, FR
 
 
@@ -53,8 +56,24 @@ def signal(C: pd.DataFrame, pc: dict) -> pd.DataFrame:
     return sig.where(C.rolling(pc["donchian"][-1]).count() >= pc["donchian"][-1])   # нужна история самого длинного окна
 
 
-def weights(C: pd.DataFrame, V: pd.DataFrame, pc: dict, universe: list[str] | None = None) -> pd.DataFrame:
-    """Целевые веса на закрытии каждого дня (доля депозита, знак = сторона)."""
+def weights(C: pd.DataFrame, V: pd.DataFrame, pc: dict, universe: list[str] | None = None,
+            FR: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Целевые веса на закрытии каждого дня (доля депозита, знак = сторона): тренд плюс лонг отрицательного фандинга."""
+    W = trend_weights(C, V, pc, universe)
+    fc = pc.get("neg_funding")
+    if fc and FR is not None:
+        W = W.add(neg_funding_weights(C, FR, fc, W.columns), fill_value=0)
+    return W
+
+
+def neg_funding_weights(C: pd.DataFrame, FR: pd.DataFrame, fc: dict, cols) -> pd.DataFrame:
+    """Шорты переполнены и платят лонгам: фандинг за сутки ниже порога -> лонг на hold_days, size на монету."""
+    neg = (FR.reindex(index=C.index, columns=cols).fillna(0) < -fc["threshold"]).astype(float)
+    w = sum(neg.shift(k).fillna(0) for k in range(fc["hold_days"])) * fc["size"] / fc["hold_days"]
+    return w.where(C.reindex(columns=cols).notna(), 0)
+
+
+def trend_weights(C: pd.DataFrame, V: pd.DataFrame, pc: dict, universe: list[str] | None = None) -> pd.DataFrame:
     R = np.log(C).diff()
     if universe:
         uni = pd.DataFrame(False, index=C.index, columns=C.columns)
@@ -64,7 +83,12 @@ def weights(C: pd.DataFrame, V: pd.DataFrame, pc: dict, universe: list[str] | No
         uni = liq.rank(axis=1, ascending=False) <= pc["top_n"]
     uni &= C.notna()
     vol = R.rolling(pc["vol_window"], min_periods=20).std()
-    w = (signal(C, pc).where(uni) / vol).replace([np.inf, -np.inf], np.nan).fillna(0)
+    sig = signal(C, pc).where(uni)
+    if pc.get("min_consensus"):   # только монеты, где почти все голоса согласны, и не больше max_positions самых уверенных
+        sc = sig.abs()
+        keep = (sc >= pc["min_consensus"]) & (sc.rank(axis=1, ascending=False, method="first") <= pc.get("max_positions", 99))
+        sig = sig.where(keep)
+    w = (sig / vol).replace([np.inf, -np.inf], np.nan).fillna(0)
     w = w.div(w.abs().sum(1).replace(0, np.nan), axis=0).fillna(0)
     pv = (w.shift(1) * R.fillna(0)).sum(1).rolling(60, min_periods=20).std() * np.sqrt(365)
     k = (pc["target_vol"] / pv).clip(upper=pc["max_gross"]).fillna(1.0)
@@ -109,7 +133,7 @@ def backtest(conn, cfg, start: str, end: str) -> dict:
     s = int(datetime.fromisoformat(start).replace(tzinfo=timezone.utc).timestamp() * 1000)
     e = int(datetime.fromisoformat(end).replace(tzinfo=timezone.utc).timestamp() * 1000)
     C, V, FR = daily_frames(conn, None, s - 400 * DAY, e)
-    W = weights(C, V, pc)
+    W = weights(C, V, pc, FR=FR)
     d = simulate(C, FR, W, cfg["trade"]["fee_taker_pct"] * pc.get("cost_mult", 1.0))
     d = d[(d.index >= s) & (d.index < e)]
     liq = V.rolling(30, min_periods=20).mean()
@@ -167,7 +191,7 @@ class LivePortfolio:
         if C.empty or day not in C.index:
             log.warning("portfolio: no full daily bar for %s", day)
             return None
-        W = weights(C, V, pc, universe=symbols)
+        W = weights(C, V, pc, universe=symbols, FR=FR)
         new = {s: round(float(w), 4) for s, w in W.loc[day].items() if abs(w) >= 0.001}
         # бумажный результат суток day по весам, выставленным на закрытии prev_day
         pnl = 0.0
