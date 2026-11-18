@@ -25,7 +25,7 @@ def bar(day, o, h, l, c):
 async def test_listing_short_entry_and_stop(cfg, conn, tg):
     d0 = 20_000
     onboard = d0 * DAY + 8 * 3_600_000
-    bars = [bar(d0, 1.0, 1.2, 0.9, 1.0), bar(d0 + 1, 1.0, 1.1, 0.95, 1.0)]
+    bars = [bar(d0, 1.05, 1.2, 0.9, 1.0), bar(d0 + 1, 1.0, 1.1, 0.95, 1.0)]
     bn = FakeBN(onboard, bars)
     ls = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), bn)
     assert await ls.run_daily((d0 + 2) * DAY + 60_000) == ["sent"]          # вход на закрытии первых полных суток
@@ -35,14 +35,14 @@ async def test_listing_short_entry_and_stop(cfg, conn, tg):
     bars.append(bar(d0 + 3, 1.1, 1.6, 1.0, 1.5))                               # вынос выше стопа
     assert await ls.run_daily((d0 + 4) * DAY + 60_000) == ["sent"]
     r = conn.execute("SELECT status, exit_reason, pnl_pct FROM listing_trades").fetchone()
-    assert r[0] == "closed" and r[1] == "stop" and r[2] == pytest.approx((-50 - 0.1) * 1.5 / 100)
+    assert r[0] == "closed" and r[1] == "stop" and r[2] == pytest.approx((-50 - 0.1) * 3.0 / 100)
     assert "Stopped out" in tg.sent[-1][1]
 
 
 @pytest.mark.asyncio
 async def test_listing_time_exit_and_late_skip(cfg, conn, tg):
     d0 = 20_000
-    bars = [bar(d0 + i, 1.0, 1.05, 0.5, 1.0 - i * 0.005) for i in range(70)]
+    bars = [bar(d0 + i, 1.0 - (i - 1) * 0.005, 1.05, 0.5, 1.0 - i * 0.005) for i in range(70)]
     ls = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), FakeBN(d0 * DAY, bars))
     await ls.run_daily((d0 + 2) * DAY)
     await ls.run_daily((d0 + 65) * DAY)
@@ -50,3 +50,12 @@ async def test_listing_time_exit_and_late_skip(cfg, conn, tg):
     assert r[0] == "time" and r[1] > 0
     late = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), FakeBN((d0 + 100) * DAY, []))
     assert await late.run_daily((d0 + 106) * DAY) == []                         # узнали поздно: пропуск
+
+
+@pytest.mark.asyncio
+async def test_hot_listing_is_filtered(cfg, conn, tg):
+    d0 = 20_000
+    bars = [bar(d0, 1.0, 1.5, 0.9, 1.3), bar(d0 + 1, 1.3, 1.4, 1.2, 1.25)]      # первые сутки выше открытия
+    ls = ListingShorts(cfg, conn, Publisher(cfg, conn, tg, -100, 7), FakeBN(d0 * DAY, bars))
+    assert await ls.run_daily((d0 + 2) * DAY) == []
+    assert conn.execute("SELECT status FROM listing_trades").fetchone()[0] == "filtered"

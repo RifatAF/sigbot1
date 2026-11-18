@@ -1,4 +1,4 @@
-params_version: "v6"
+params_version: "v7"
 
 universe:
   top_n: 30
@@ -16,14 +16,14 @@ publishing:
 
 risk:
   deposit_usd: 1000
-  risk_min_pct: 5.0
-  risk_max_pct: 12.0
+  risk_min_pct: 1.0
+  risk_max_pct: 3.0
   public_leverage_cap: 25
   personal_leverage_cap: 10
   maintenance_margin_pct: 0.5
   # портфельный предохранитель
   max_open_trades: 3
-  max_open_risk_pct: 36.0
+  max_open_risk_pct: 9.0
   dd_half_pct: 30          # просадка от пика: риск вдвое меньше
   dd_pause_pct: 50         # новые входы стоп, владельцу уведомление
   dd_pause_days: 7         # длина паузы, потом просадка считается от нового пика
@@ -72,7 +72,7 @@ llm:
   timeout_s: 60
 
 engine:
-  setup: [capitulation, trend]   # capitulation, trend, divergence (v1); можно списком
+  setup: [capitulation]        # тренд ведёт портфель; capitulation, trend, divergence (v1)
   min_divergence_score: 1.0    # одна регулярная или две скрытые дивергенции
   min_index: 0.0               # индекс не против сделки
   stop_atr_buffer: 0.3
@@ -113,7 +113,8 @@ portfolio:
 
 listings:
   enabled: true
-  notional_pct: 1.5            # шорт на каждый новый листинг, % капитала (убыток по стопу ~0.75%)
+  notional_pct: 3.0            # шорт на каждый новый листинг, % капитала (убыток по стопу ~1.5%)
+  require_weak_first_day: true # только если первые сутки закрылись ниже открытия листинга
   stop_pct: 50                 # стоп при росте на 50% от входа
   hold_days: 60
   max_entry_delay_days: 2      # если бот узнал о листинге позже, сделка пропускается
