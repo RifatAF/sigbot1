@@ -46,7 +46,7 @@ class Live:
     async def scan(self, t: int | None = None) -> list[int]:
         t = t or now_ms() // HOUR * HOUR
         cfg = self.eff()
-        if cfg["publishing"].get("kill_switch"):
+        if cfg["publishing"].get("kill_switch") or not cfg["scanner"].get("enabled", True):
             return []
         symbols = settings.get(self.conn, "symbols_manual") or settings.get(self.conn, "universe", [])
         cands, closes, frames = [], {}, {}
@@ -92,7 +92,7 @@ class Live:
                 log.info("skip %s %s: %s", c.symbol, c.side, g.reason or "stop too tight or no risk room")
                 if not g.allow and settings.get(self.conn, "guard_notice") != g.reason:
                     settings.put(self.conn, "guard_notice", g.reason)
-                    await self.pub.notify_owner(f"Risk guard: new signals stopped ({g.reason}).")
+                    await self.pub.notify_owner(f"🛑 Защита депозита: новые часовые сигналы приостановлены ({g.reason}).")
                 continue
             ids.append(await self.open_signal(c, frames[c.symbol], cfg, sz))
         return ids

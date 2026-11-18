@@ -60,7 +60,7 @@ def guard(rc: dict, results: list, open_risk_pct: list[float], now: int | None =
     open_risk_pct: риск открытых сделок. Просадка от пика и серия убытков уменьшают риск.
     Глубокая просадка ставит входы на паузу на dd_pause_days, после паузы пик считается заново."""
     if len(open_risk_pct) >= rc.get("max_open_trades", 99):
-        return Guard(False, 0.0, "max open trades")
+        return Guard(False, 0.0, "уже открыто максимум сделок")
     pairs = [r if isinstance(r, (tuple, list)) else (None, r) for r in results]
     cool = rc.get("dd_pause_days", 7) * 86_400_000
     eq, peak = 1.0, 1.0
@@ -69,14 +69,14 @@ def guard(rc: dict, results: list, open_risk_pct: list[float], now: int | None =
         peak = max(peak, eq)
         if (1 - eq / peak) * 100 >= rc.get("dd_pause_pct", 100):
             if ts is None or now is None or now - ts < cool:
-                return Guard(False, 0.0, f"drawdown {(1 - eq / peak) * 100:.1f}% pause")
+                return Guard(False, 0.0, f"просадка {(1 - eq / peak) * 100:.1f}%, пауза")
             peak = eq   # пауза отбыта: отсчёт просадки заново
     dd = (1 - eq / peak) * 100
     mult = 1.0
     reason = []
     if dd >= rc.get("dd_half_pct", 100):
         mult *= 0.5
-        reason.append(f"drawdown {dd:.1f}%")
+        reason.append(f"просадка {dd:.1f}%")
     streak = 0
     for _, r in reversed(pairs):
         if r > 0:
@@ -84,10 +84,10 @@ def guard(rc: dict, results: list, open_risk_pct: list[float], now: int | None =
         streak += 1
     if streak >= rc.get("loss_streak", 99):
         mult *= 0.5
-        reason.append(f"{streak} losses in a row")
+        reason.append(f"{streak} убытка подряд")
     room = rc.get("max_open_risk_pct", 100) - sum(open_risk_pct)
     if room < rc["risk_min_pct"] * 0.5:
-        return Guard(False, 0.0, "max open risk")
+        return Guard(False, 0.0, "исчерпан лимит риска открытых сделок")
     return Guard(True, mult, ", ".join(reason))
 
 

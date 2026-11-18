@@ -174,7 +174,7 @@ async def run(cfg, conn):
         admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col, leader)
         tasks.append(asyncio.create_task(_guard("admin", admin.loop)))
         tasks.append(asyncio.create_task(_guard("leader", leader.loop)))
-        await pub.notify_owner(f"sigbot started on {leader.name} as main. /menu for settings.")
+        await pub.notify_owner(f"✅ Бот запущен на компьютере {leader.name}, он основной. Настройки: /menu")
     tasks.append(asyncio.create_task(_guard("heartbeat", lambda: heartbeat(conn, leader))))
     from . import autoprep
     asyncio.create_task(autoprep.run(cfg, conn, http))

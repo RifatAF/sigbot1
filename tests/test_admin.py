@@ -60,3 +60,38 @@ def test_fallback_parser_when_llm_fails(cfg, conn):
         await asyncio.sleep(0.05)
     asyncio.run(run())
     assert "Разобрал без нейросети" in tg.sent[-1] and "VPN" in tg.sent[-1]
+
+
+def test_every_menu_button_answers_in_russian(cfg, conn):
+    import re
+
+    class TG2(TG):
+        async def answer_callback(self, *a, **kw):
+            return {}
+
+        async def edit_text(self, chat, mid, text, markup=None):
+            self.sent.append(text)
+
+        async def send_document(self, *a, **kw):
+            return {}
+
+    class Live:
+        def open_trades(self):
+            return []
+
+    tg = TG2()
+    adm = Admin(cfg, conn, tg, 7, None, Live(), FailLLM(), Bloggers(cfg, conn), None, None)
+    text, markup = adm.menu()
+    assert "Режим публикации" in text
+    datas = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+    skip = {"selfcheck", "testposts:ch", "testposts:me", "export"}       # ходят в сеть
+    sub = ["strat", "tg:portfolio.enabled", "thr:0.02", "risk", "rk:risk_max_pct:0.1", "sched", "sch:1", "mode", "setmode:confirm"]
+
+    async def run():
+        for d in [x for x in datas if x not in skip] + sub:
+            n = len(tg.sent)
+            await adm.on_callback({"id": "1", "data": d, "message": {"chat": {"id": 7}, "message_id": 1}})
+            if d not in ("pause", "kill", "noop") and len(tg.sent) > n:
+                assert re.search("[а-яА-Я]", tg.sent[-1]), d
+    asyncio.run(run())
+    assert adm.eff()["portfolio"]["enabled"] is False and adm.eff()["publishing"]["mode"] == "confirm"

@@ -28,94 +28,178 @@ class Admin:
         return settings.effective(self.cfg, self.conn)
 
     # ---------- экраны ----------
+    BACK = [("⬅️ В меню", "menu")]
+    MODES = {"paper": ("🧪 Тестовый", "посты сразу уходят в канал с пометкой #forwardtest, деньги не участвуют"),
+             "confirm": ("✋ С подтверждением", "каждый пост сначала приходит тебе, в канал уходит после кнопки «Опубликовать»"),
+             "auto": ("🚀 Боевой", "посты уходят в канал сразу, без пометки и без подтверждения")}
+    NAMES = {"universe": "список монет", "klines_futures": "свечи фьючерсов", "klines_spot": "свечи спота",
+             "oi_funding": "открытый интерес и фандинг", "liquidations": "ликвидации", "premium": "премия Coinbase",
+             "fear_greed": "индекс страха и жадности"}
+
+    def _state(self, p) -> str:
+        return ("⛔ ОСТАНОВЛЕН (аварийная кнопка)" if p.get("kill_switch") else
+                "⏸ на паузе, посты не уходят" if p.get("paused") else "▶️ работает")
+
     def menu(self):
         e = self.eff()
         p = e["publishing"]
-        status = "⛔ KILL" if p.get("kill_switch") else "⏸ paused" if p.get("paused") else "▶️ running"
-        text = (f"<b>sigbot</b> · {status}\nMode: <b>{p['mode']}</b>\n"
-                f"Risk: {e['risk']['risk_min_pct']}–{e['risk']['risk_max_pct']}%\n"
-                f"Leverage cap: public x{e['risk']['public_leverage_cap']}, personal x{e['risk']['personal_leverage_cap']}\n"
-                f"Signals/day: {e['scanner']['max_signals_per_day']}")
+        on = lambda x: "вкл" if x else "выкл"
+        role = ""
+        if self.leader:
+            role = f"\nКомпьютер: <b>{self.leader.name}</b> ({'основной' if self.leader.is_main else 'запасной'})"
+        n_tr = self.conn.execute("SELECT COUNT(*) FROM trend_signals WHERE status='open'").fetchone()[0]
+        n_ls = self.conn.execute("SELECT COUNT(*) FROM listing_trades WHERE status='open'").fetchone()[0]
+        n_h = len(self.live.open_trades()) if self.live else 0
+        text = (f"🤖 <b>sigbot</b> · {self._state(p)}{role}\n"
+                f"Режим публикации: <b>{self.MODES.get(p['mode'], (p['mode'],))[0]}</b>\n"
+                f"Открыто сейчас: тренд {n_tr}, листинги {n_ls}, капитуляции {n_h}\n"
+                f"Стратегии: 🧭 тренд {on(e['portfolio'].get('enabled'))} · 🆕 листинги {on(e['listings'].get('enabled'))}"
+                f" · ⚡ капитуляции {on(e['scanner'].get('enabled', True))}\n\n"
+                "Выбери раздел. Непонятно, что делает кнопка: «❓ Помощь».")
         rows = [
-            [("📊 Status", "status"), ("🩺 Health", "health")],
-            [("✅ Self-check", "selfcheck")],
-            [("🧪 Test → channel", "testposts:ch"), ("🧪 Test → me", "testposts:me")],
-            [("🔁 Mode", "mode"), ("⏸ Pause" if not p.get("paused") else "▶️ Resume", "pause")],
-            [("⚖️ Risk", "risk"), ("📐 Leverage", "lev")],
-            [("🪙 Coins", "coins"), ("🕒 Schedule", "sched")],
-            [("📤 Export CSV", "export"), ("🧾 Post mortem", "pm")],
-            [("🗣 Bloggers", "blog"), ("📌 Post method", "method")],
-            [("⛔ Kill switch OFF" if p.get("kill_switch") else "⛔ Kill switch", "kill")],
+            [("📊 Что открыто", "status"), ("🩺 Состояние", "health")],
+            [("✅ Проверить всё", "selfcheck")],
+            [("🧪 Тест в канал", "testposts:ch"), ("🧪 Тест мне", "testposts:me")],
+            [("📣 Режим публикации", "mode"), ("▶️ Продолжить" if p.get("paused") else "⏸ Пауза", "pause")],
+            [("🧭 Стратегии", "strat"), ("⚖️ Риск и плечо", "risk")],
+            [("🪙 Монеты", "coins"), ("🕒 Расписание", "sched")],
+            [("🧾 Итоги недели", "pm"), ("📤 Сделки в Excel", "export")],
+            [("🗣 Блогеры", "blog"), ("📌 Пост о методе", "method")],
+            [("💻 Компьютеры", "pcs"), ("❓ Помощь", "help")],
+            [("✅ Снять аварийную остановку" if p.get("kill_switch") else "⛔ Аварийная остановка", "kill")],
         ]
         return text, kb(rows)
 
+    def help_screen(self):
+        text = ("<b>Что где</b>\n\n"
+                "📊 <b>Что открыто</b>: все открытые сигналы с уровнями выхода.\n"
+                "🩺 <b>Состояние</b>: идут ли данные с биржи, когда был последний поиск.\n"
+                "✅ <b>Проверить всё</b>: Telegram, канал, биржа, история, картинки. Ответ ✅ / ⚠️ / ❌ по каждому пункту.\n"
+                "🧪 <b>Тест</b>: все виды постов с пометкой TEST, в канал или тебе. Ничего не ломает.\n"
+                "📣 <b>Режим публикации</b>: тестовый, с подтверждением или боевой.\n"
+                "⏸ <b>Пауза</b>: бот считает, но посты не отправляет. Снимается той же кнопкой.\n"
+                "🧭 <b>Стратегии</b>: включить или выключить тренд, листинги, капитуляции; порог сигнала тренда.\n"
+                "⚖️ <b>Риск и плечо</b>: риск на часовую сделку и потолок плеча.\n"
+                "🪙 <b>Монеты</b>: какие монеты смотрит бот (авто: топ по обороту).\n"
+                "🕒 <b>Расписание</b>: время ежедневной заметки.\n"
+                "🧾 <b>Итоги недели</b>: что закрылось, сколько заработано, разбор минусов.\n"
+                "📤 <b>Сделки в Excel</b>: все сигналы и результаты файлами CSV.\n"
+                "🗣 <b>Блогеры</b>: перешли сюда пост или скриншот, бот вытащит уровни и покажет их на картинках сигналов.\n"
+                "📌 <b>Пост о методе</b>: закреплённый пост в канале с объяснением стратегии.\n"
+                "💻 <b>Компьютеры</b>: какой компьютер сейчас главный и как переключить.\n"
+                "⛔ <b>Аварийная остановка</b>: бот перестаёт искать сигналы и писать в канал, пока не снимешь.\n\n"
+                f"Панель с графиками: http://127.0.0.1:{self.cfg['dashboard']['port']} на компьютере с ботом.")
+        return text, kb([self.BACK])
+
     def mode_screen(self):
         m = self.eff()["publishing"]["mode"]
-        rows = [[(("• " if m == x else "") + x, f"setmode:{x}") for x in ("paper", "confirm", "auto")],
-                [("⬅️ Back", "menu")]]
-        return ("paper: publish right away with #forwardtest\nconfirm: every post waits for your button\n"
-                "auto: publish without confirmation"), kb(rows)
+        lines = ["<b>Режим публикации</b>\n"] + [f"{'👉 ' if m == k else ''}<b>{v[0]}</b>: {v[1]}" for k, v in self.MODES.items()]
+        rows = [[(("• " if m == k else "") + v[0], f"setmode:{k}")] for k, v in self.MODES.items()] + [self.BACK]
+        return "\n".join(lines), kb(rows)
+
+    def strat_screen(self):
+        e = self.eff()
+        st = lambda x: "✅ вкл" if x else "❌ выкл"
+        thr = e["portfolio"].get("signal_min_weight", 0.1)
+        text = ("<b>Стратегии</b>\n\n"
+                f"🧭 <b>Тренд</b> {st(e['portfolio'].get('enabled'))}: основная прибыль, около сигнала в день. "
+                f"Сигналом становится позиция от {thr * 100:.0f}% депозита: ниже порог, больше сигналов, но они мельче.\n\n"
+                f"🆕 <b>Шорт листингов</b> {st(e['listings'].get('enabled'))}: шорт новых монет со слабым первым днём, держим до 60 дней.\n\n"
+                f"⚡ <b>Капитуляции</b> {st(e['scanner'].get('enabled', True))}: редкие часовые сигналы после сильного слива, со стопом и целями.")
+        rows = [[("🧭 Тренд: " + ("выключить" if e["portfolio"].get("enabled") else "включить"), "tg:portfolio.enabled")],
+                [("Порог −", "thr:-0.02"), (f"порог {thr * 100:.0f}% депо", "noop"), ("Порог +", "thr:0.02")],
+                [("🆕 Листинги: " + ("выключить" if e["listings"].get("enabled") else "включить"), "tg:listings.enabled")],
+                [("⚡ Капитуляции: " + ("выключить" if e["scanner"].get("enabled", True) else "включить"), "tg:scanner.enabled")],
+                self.BACK]
+        return text, kb(rows)
 
     def risk_screen(self):
-        r = self.eff()["risk"]
-        rows = [[("min −", "rk:risk_min_pct:-0.1"), (f"min {r['risk_min_pct']}%", "noop"), ("min +", "rk:risk_min_pct:0.1")],
-                [("max −", "rk:risk_max_pct:-0.1"), (f"max {r['risk_max_pct']}%", "noop"), ("max +", "rk:risk_max_pct:0.1")],
-                [("signals/day −", "sp:-1"), (str(self.eff()["scanner"]["max_signals_per_day"]), "noop"), ("+", "sp:1")],
-                [("⬅️ Back", "menu")]]
-        return "Risk per trade by signal strength", kb(rows)
+        e = self.eff()
+        r = e["risk"]
+        text = ("<b>Риск и плечо</b> (только для ⚡ капитуляций: у тренда и листингов размер в посте)\n\n"
+                f"Риск на сделку: от {r['risk_min_pct']}% до {r['risk_max_pct']}% депозита, столько теряешь, если сработает стоп. "
+                "Слабый сигнал берёт нижнюю границу, сильный верхнюю.\n"
+                f"Не больше {e['scanner']['max_signals_per_day']} сигналов в день.\n"
+                f"Потолок плеча: в канале x{r['public_leverage_cap']}, для тебя x{r['personal_leverage_cap']}. "
+                "Далёкий стоп снижает плечо, но сигнал не отменяет.")
+        rows = [[("мин −", "rk:risk_min_pct:-0.1"), (f"мин {r['risk_min_pct']}%", "noop"), ("мин +", "rk:risk_min_pct:0.1")],
+                [("макс −", "rk:risk_max_pct:-0.1"), (f"макс {r['risk_max_pct']}%", "noop"), ("макс +", "rk:risk_max_pct:0.1")],
+                [("сигналов в день −", "sp:-1"), (str(e["scanner"]["max_signals_per_day"]), "noop"), ("+", "sp:1")],
+                [("плечо в канале −5", "rk:public_leverage_cap:-5"), (f"x{r['public_leverage_cap']}", "noop"), ("+5", "rk:public_leverage_cap:5")],
+                [("моё плечо −1", "rk:personal_leverage_cap:-1"), (f"x{r['personal_leverage_cap']}", "noop"), ("+1", "rk:personal_leverage_cap:1")],
+                self.BACK]
+        return text, kb(rows)
 
     def lev_screen(self):
-        r = self.eff()["risk"]
-        rows = [[("public −5", "rk:public_leverage_cap:-5"), (f"x{r['public_leverage_cap']}", "noop"),
-                 ("public +5", "rk:public_leverage_cap:5")],
-                [("personal −1", "rk:personal_leverage_cap:-1"), (f"x{r['personal_leverage_cap']}", "noop"),
-                 ("personal +1", "rk:personal_leverage_cap:1")],
-                [("⬅️ Back", "menu")]]
-        return "Leverage caps. A far stop lowers leverage, it never cancels a signal.", kb(rows)
+        return self.risk_screen()
 
     def sched_screen(self):
         s = self.eff()["schedule"]
-        rows = [[("note −1h", "sch:-1"), (f"daily note {s['daily_note_hour_utc']}:00 UTC", "noop"), ("+1h", "sch:1")],
-                [("⬅️ Back", "menu")]]
-        return "Schedule", kb(rows)
+        msk = (s["daily_note_hour_utc"] + 3) % 24
+        text = ("<b>Расписание</b>\n\n"
+                f"Ежедневная заметка о рынке: {s['daily_note_hour_utc']}:00 UTC ({msk}:00 по Москве).\n"
+                "Тренд считается после закрытия суток (около 03:00 по Москве), листинги каждые 6 часов, капитуляции каждый час.")
+        rows = [[("−1 час", "sch:-1"), (f"заметка {msk}:00 МСК", "noop"), ("+1 час", "sch:1")], self.BACK]
+        return text, kb(rows)
 
     def coins_screen(self):
         manual = settings.get(self.conn, "symbols_manual")
         cur = manual or settings.get(self.conn, "universe", [])
-        src = "manual list" if manual else f"auto top {self.cfg['universe']['top_n']} by volume"
-        text = (f"Coins ({src}, {len(cur)}):\n{', '.join(s.replace('USDT', '') for s in cur)}\n\n"
-                "Set your own list: /coins BTC,ETH,SOL\nBack to auto: /coins auto")
-        return text, kb([[("⬅️ Back", "menu")]])
+        src = "свой список" if manual else f"автоматически: топ {self.cfg['universe']['top_n']} по обороту"
+        text = (f"<b>Монеты</b> ({src}, {len(cur)} шт.)\n{', '.join(s.replace('USDT', '') for s in cur)}\n\n"
+                "Задать свой список: напиши <code>/coins BTC,ETH,SOL</code>\n"
+                "Вернуть автоматический: <code>/coins auto</code>")
+        return text, kb([self.BACK])
+
+    def pcs_screen(self):
+        if not self.leader:
+            return "Бот работает на одном компьютере, переключать нечего.", kb([self.BACK])
+        text = ("<b>Компьютеры</b>\n\n"
+                f"Этот компьютер: <b>{self.leader.name}</b> ({'основной, пишет в канал' if self.leader.is_main else 'запасной, молчит'}).\n\n"
+                "Бот можно держать на двух компьютерах. В канал пишет только основной, запасной ждёт. "
+                "Если основной молчит 15 минут, запасной сам становится главным.\n\n"
+                "Сделать главным другой компьютер: напиши <code>/main имя</code> (имя: SIGBOT_NAME из .env того компьютера).")
+        return text, kb([self.BACK])
 
     def status_text(self) -> str:
-        opens = self.live.open_trades()
-        lines = [f"Open trades: {len(opens)}"]
+        lines = ["<b>Открыто сейчас</b>"]
+        tr = self.conn.execute("SELECT * FROM trend_signals WHERE status='open' ORDER BY size_pct DESC").fetchall()
+        lines.append(f"\n🧭 Тренд: {len(tr)}")
+        for r in tr:
+            lv = (f", выход при закрытии дня {'ниже' if r['side'] == 'long' else 'выше'} {r['exit_level']:.6g}"
+                  if r["exit_level"] else "")
+            lines.append(f"  {r['symbol'].replace('USDT', '')} {'лонг' if r['side'] == 'long' else 'шорт'} "
+                         f"от {r['entry']:.6g}, {r['size_pct']}% депо{lv}")
+        ls = self.conn.execute("SELECT * FROM listing_trades WHERE status='open'").fetchall()
+        lines.append(f"\n🆕 Шорты листингов: {len(ls)}")
+        for r in ls:
+            lines.append(f"  {r['symbol'].replace('USDT', '')} шорт от {r['entry']:.6g}, стоп {r['stop']:.6g}, "
+                         f"выход {time.strftime('%d.%m', time.gmtime(r['exit_due_ts'] / 1000))}")
+        opens = self.live.open_trades() if self.live else []
+        lines.append(f"\n⚡ Капитуляции: {len(opens)}")
         for o in opens:
-            lines.append(f"  #{o['id']} {o['symbol']} {o['side']} entry {o['entry']} stop {o['cur_stop']} "
-                         f"left {o['remaining']:.0%}")
-        t = int(time.time() * 1000)
-        n7 = self.conn.execute("SELECT COUNT(*) FROM signals WHERE ts>? AND source='live'", (t - 7 * DAY,)).fetchone()[0]
-        last = settings.get(self.conn, "last_scan")
-        lines.append(f"Signals 7d: {n7}")
-        if last:
-            lines.append(f"Last scan: {time.strftime('%Y-%m-%d %H:%M', time.gmtime(last['ts'] / 1000))} UTC, "
-                         f"{last['symbols']} coins, {last['candidates']} candidates")
+            lines.append(f"  #{o['id']} {o['symbol'].replace('USDT', '')} {'лонг' if o['side'] == 'long' else 'шорт'} "
+                         f"вход {o['entry']:.6g}, стоп {o['cur_stop']:.6g}, осталось {o['remaining']:.0%}")
         pend = self.conn.execute("SELECT COUNT(*) FROM posts WHERE status='pending'").fetchone()[0]
         if pend:
-            lines.append(f"Posts waiting for you: {pend}")
+            lines.append(f"\n✋ Ждут твоего подтверждения: {pend}")
         return "\n".join(lines)
 
     def health_text(self) -> str:
+        lines = ["<b>Состояние</b>\n"]
         if self.collector:
-            snap = self.collector.health.snapshot()
-            lines = [f"{c}: {'ERR ' + v['error'][:80] if v['error'] else 'ok'}"
-                     + (f" ({v['age_s']}s ago)" if v["age_s"] is not None else "") for c, v in snap.items()]
-        else:
-            lines = []
+            for c, v in self.collector.health.snapshot().items():
+                ago = f", {v['age_s'] // 60} мин назад" if v["age_s"] is not None else ""
+                lines.append(f"{'❌' if v['error'] else '✅'} {self.NAMES.get(c, c)}"
+                             + (f": ошибка {v['error'][:80]}" if v["error"] else ago))
+        last = settings.get(self.conn, "last_scan")
+        if last:
+            lines.append(f"\nПоследний поиск капитуляций: {time.strftime('%d.%m %H:%M', time.gmtime(last['ts'] / 1000))} UTC, "
+                         f"монет {last['symbols']}, кандидатов {last['candidates']}")
         t = int(time.time() * 1000)
         g = self.conn.execute("SELECT COUNT(*) FROM gaps WHERE start_ts>?", (t - DAY,)).fetchone()[0]
-        lines.append(f"Gaps 24h: {g}")
-        return "\n".join(lines) or "no data yet"
+        lines.append(f"Пропусков в данных за сутки: {g}")
+        return "\n".join(lines)
 
     # ---------- обработка ----------
     async def show(self, chat, screen, message_id=None):
@@ -135,20 +219,37 @@ class Admin:
         if data == "menu":
             return await self.show(chat, self.menu(), mid)
         if data == "status":
-            return await self.show(chat, (self.status_text(), kb([[("⬅️ Back", "menu")]])), mid)
+            return await self.show(chat, (self.status_text(), kb([self.BACK])), mid)
         if data == "health":
-            return await self.show(chat, (self.health_text(), kb([[("⬅️ Back", "menu")]])), mid)
+            return await self.show(chat, (self.health_text(), kb([self.BACK])), mid)
         if data == "selfcheck":
             from . import diag
-            await self.tg.send_message(chat, "Checking…", parse_mode=None)
+            await self.tg.send_message(chat, "Проверяю… до минуты.", parse_mode=None)
             rows = await diag.selfcheck(self.cfg, self.conn, self.tg.http)
             return await self.tg.send_message(chat, diag.format_check(rows), parse_mode=None)
         if data.startswith("testposts"):
             from . import diag
             to = self.pub.channel_id if data.endswith(":ch") else chat
             n = await diag.test_posts(self.cfg, self.conn, self.tg, to)
-            return await self.tg.send_message(chat, f"🧪 Test posts sent: {n} ({'channel' if to != chat else 'here'}).",
+            return await self.tg.send_message(chat, f"🧪 Отправлено тестовых постов: {n} ({'в канал' if to != chat else 'сюда'}).",
                                               parse_mode=None)
+        if data == "noop":
+            return
+        if data == "help":
+            return await self.show(chat, self.help_screen(), mid)
+        if data == "pcs":
+            return await self.show(chat, self.pcs_screen(), mid)
+        if data == "strat":
+            return await self.show(chat, self.strat_screen(), mid)
+        if data.startswith("tg:"):
+            key = data[3:]
+            sec, leaf = key.split(".")
+            settings.put(self.conn, key, not e[sec].get(leaf, True))
+            return await self.show(chat, self.strat_screen(), mid)
+        if data.startswith("thr:"):
+            v = round(min(max(e["portfolio"].get("signal_min_weight", 0.1) + float(data[4:]), 0.04), 0.3), 2)
+            settings.put(self.conn, "portfolio.signal_min_weight", v)
+            return await self.show(chat, self.strat_screen(), mid)
         if data == "mode":
             return await self.show(chat, self.mode_screen(), mid)
         if data.startswith("setmode:"):
@@ -159,8 +260,8 @@ class Admin:
             return await self.show(chat, self.menu(), mid)
         if data == "kill":
             if not e["publishing"].get("kill_switch"):
-                return await self.show(chat, ("Kill switch stops scanning and all posts. Sure?",
-                                              kb([[("⛔ Yes, stop everything", "kill_yes"), ("Cancel", "menu")]])), mid)
+                return await self.show(chat, ("⛔ Аварийная остановка: бот перестанет искать сигналы и писать в канал, пока не снимешь её. Остановить?",
+                                              kb([[("⛔ Да, остановить всё", "kill_yes"), ("Отмена", "menu")]])), mid)
             settings.put(self.conn, "publishing.kill_switch", False)
             return await self.show(chat, self.menu(), mid)
         if data == "kill_yes":
@@ -200,23 +301,23 @@ class Admin:
             return await self.tg.send_message(chat, postmortem.build(self.conn, t - 7 * DAY, t), parse_mode=None)
         if data == "blog":
             acc = self.bl.accuracy()
-            text = "Send me a blogger's text or screenshot and I'll extract the levels.\n\nAccuracy:\n" + (
+            text = "<b>Блогеры</b>\n\nПерешли сюда пост блогера или пришли скриншот: бот вытащит монету и уровни, спросит подтверждение и покажет их зонами на картинках сигналов. На входы бота это не влияет.\n\nТочность авторов (уровень сработал / всего):\n" + (
                 "\n".join(f"{a['author']}: {a['hits']}/{a['calls']} ({a['hit_rate_pct']}%)" for a in acc)
-                or "no finished calls yet")
-            return await self.show(chat, (text, kb([[("⬅️ Back", "menu")]])), mid)
+                or "пока нет завершённых прогнозов")
+            return await self.show(chat, (text, kb([self.BACK])), mid)
         if data == "method":
-            return await self.show(chat, ("Publish and pin the method post in the channel?",
-                                          kb([[("📌 Publish & pin", "method_yes"), ("Cancel", "menu")]])), mid)
+            return await self.show(chat, ("Опубликовать в канале пост с объяснением метода и закрепить его?",
+                                          kb([[("📌 Опубликовать и закрепить", "method_yes"), ("Отмена", "menu")]])), mid)
         if data == "method_yes":
             return await self.post_method(chat)
         if data.startswith(("pub:", "drop:")):
             kind, pid = data.split(":")
             res = await self.pub.resolve_pending(int(pid), kind == "pub")
-            return await self.tg.send_message(chat, f"Post #{pid}: {res}", parse_mode=None)
+            return await self.tg.send_message(chat, f"Пост #{pid}: " + {"sent": "опубликован ✅", "dropped": "удалён", "paused": "пауза, не опубликован"}.get(res, str(res)), parse_mode=None)
         if data.startswith(("bl_ok:", "bl_no:")):
             kind, cid = data.split(":")
             self.bl.confirm(int(cid), kind == "bl_ok")
-            return await self.tg.send_message(chat, "Saved ✅" if kind == "bl_ok" else "Dropped", parse_mode=None)
+            return await self.tg.send_message(chat, "Сохранено ✅" if kind == "bl_ok" else "Удалено", parse_mode=None)
 
     async def post_method(self, chat):
         import glob
@@ -232,8 +333,8 @@ class Admin:
             try:
                 await self.tg.pin(self.pub.channel_id, mid)
             except Exception as e:
-                status += f" (pin failed: {e})"
-        await self.tg.send_message(chat, f"Method post: {status}", parse_mode=None)
+                status += f" (закрепить не вышло: {e})"
+        await self.tg.send_message(chat, "Пост о методе: " + ("опубликован" if status.startswith("sent") else status), parse_mode=None)
 
     async def on_message(self, msg):
         chat = msg["chat"]["id"]
@@ -243,13 +344,12 @@ class Admin:
         if text.startswith("/main") and self.leader:
             parts = text.split()
             if len(parts) < 2:
-                return await self.tg.send_message(chat, f"Main now: {self.leader.name}. Switch: /main <name>, "
-                                                        "name is SIGBOT_NAME of the other computer.", parse_mode=None)
+                return await self.tg.send_message(chat, f"Сейчас главный: {self.leader.name}. Переключить: /main имя (SIGBOT_NAME другого компьютера).", parse_mode=None)
             target = parts[1].lower()
             await self.leader.claim(target)
             if target != self.leader.name:
                 self.leader.is_main = False
-            return await self.tg.send_message(chat, f"Main is now {target}. It takes over within a minute.",
+            return await self.tg.send_message(chat, f"Главный теперь {target}. Он подхватит работу в течение минуты.",
                                               parse_mode=None)
         if text.startswith("/coins"):
             arg = text[6:].strip()
@@ -311,6 +411,15 @@ class Admin:
                                    parse_mode=None)
 
     async def loop(self):
+        import json as _json
+        try:   # подсказки команд в Telegram по кнопке «/» и в меню бота
+            await self.tg.call("setMyCommands", commands=_json.dumps([
+                {"command": "menu", "description": "Главное меню и настройки"},
+                {"command": "main", "description": "Какой компьютер главный, переключить"},
+                {"command": "coins", "description": "Список монет: /coins BTC,ETH или /coins auto"}], ensure_ascii=False),
+                scope=_json.dumps({"type": "chat", "chat_id": self.owner}))
+        except Exception as e:
+            log.info("setMyCommands: %s", e)
         offset = settings.get(self.conn, "tg_offset")
         while True:
             if self.leader and not self.leader.is_main:

@@ -39,7 +39,7 @@ class Publisher:
         except NumberMismatch as e:
             self._log(kind, text, "blocked", signal_id, detail=str(e))
             log.error("post blocked: %s", e)
-            await self.notify_owner(f"⛔ Post blocked by number check: {e}")
+            await self.notify_owner(f"⛔ Пост не отправлен: цифры в тексте не совпали с расчётом ({e}). Это защита от ошибок.")
             return "blocked"
 
         if self._standby():
@@ -60,7 +60,7 @@ class Publisher:
             pid = self._log(kind, text, "pending", signal_id, photo="1" if png else None)
             if png:
                 settings.put(self.conn, f"pending_png_{pid}", png.hex())
-            markup = kb([[("✅ Publish", f"pub:{pid}"), ("✖️ Drop", f"drop:{pid}")]])
+            markup = kb([[("✅ Опубликовать", f"pub:{pid}"), ("✖️ Не публиковать", f"drop:{pid}")]])
             if png:
                 await self.tg.send_photo(self.owner_id, png, text, reply_markup=markup)
             else:

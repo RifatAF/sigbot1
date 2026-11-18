@@ -118,7 +118,8 @@ async def selfcheck(cfg, conn, http) -> list[tuple[str, str, str]]:
 
     # 6. режим
     p = settings.effective(cfg, conn)["publishing"]
-    st = "kill switch" if p.get("kill_switch") else "пауза" if p.get("paused") else p["mode"]
+    st = ("аварийная остановка" if p.get("kill_switch") else "пауза" if p.get("paused") else
+          {"paper": "тестовый режим", "confirm": "с подтверждением", "auto": "боевой режим"}.get(p["mode"], p["mode"]))
     add(WARN if p.get("kill_switch") or p.get("paused") else OK, "Публикация", st)
     lp = conn.execute("SELECT ts, kind, status FROM posts ORDER BY id DESC LIMIT 1").fetchone()
     if lp:
