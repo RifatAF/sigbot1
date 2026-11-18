@@ -117,7 +117,9 @@ class Admin:
                              "запомнил «сайт не найден», открой эту через пару минут.\n")
             else:
                 errs = phone.tunnel_errors()
-                diag = "Cloudflare: " + (why or "нет ответа") + ((" | " + " | ".join(e[-140:] for e in errs)) if errs else "")
+                diag = ("Cloudflare: " + (why or "нет ответа")
+                        + (" (туннель не соединился с Cloudflare)" if not phone.registered() else "")
+                        + ((" | " + " | ".join(e[-160:] for e in errs)) if errs else ""))
                 lines.append("⚠️ С компьютера не открывается. " + escape(diag) + "\n")
                 print("📱 " + diag, flush=True)
         else:
@@ -132,7 +134,9 @@ class Admin:
                 lines.append(f"🌍 <b>Запасная ссылка</b>:\n{alt}/?token={tok}\n"
                              + ("✅ Проверил с компьютера: открывается.\n" if ok2 else f"⚠️ Тоже не открывается: {escape(why2)}\n"))
             else:
-                lines.append("⚠️ Запасной туннель тоже не поднялся. Перешли мне это сообщение целиком.\n")
+                why2 = " | ".join(e[-160:] for e in phone.tunnel_errors(prefix="lhr: ")) or "нет ответа"
+                lines.append(f"⚠️ Запасной туннель тоже не поднялся: {escape(why2)}\n")
+                print("📱 запасной: " + why2, flush=True)
         ips = phone.lan_ips()
         if self.cfg["dashboard"].get("host") != "0.0.0.0":
             lines.append("🏠 Wi-Fi выключен: в config.yaml dashboard.host должен быть 0.0.0.0.\n")

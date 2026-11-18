@@ -76,9 +76,20 @@ async def check(url: str, tok: str, tries: int = 12) -> tuple[bool, str]:
     return False, why
 
 
-def tunnel_errors(n: int = 3) -> list[str]:
-    """Последние ошибки cloudflared: почему туннель не соединился с Cloudflare."""
-    return [x for x in STATE.get("log", []) if " ERR " in x or "error" in x.lower()][-n:]
+def tunnel_errors(n: int = 4, prefix: str = "") -> list[str]:
+    """Последние строки журнала туннеля: ошибки, а если их нет, просто последние строки."""
+    log_ = [x for x in STATE.get("log", []) if x.startswith(prefix)] if prefix else \
+        [x for x in STATE.get("log", []) if not x.startswith("lhr: ")]
+    errs = [x for x in log_ if " ERR " in x or " WRN " in x or "error" in x.lower() or "fail" in x.lower()]
+    alive = STATE.get("proc") and STATE["proc"].returncode is None
+    out = (errs or log_)[-n:]
+    if not prefix and not alive:
+        out.append("cloudflared завершился")
+    return out
+
+
+def registered() -> bool:
+    return any("Registered tunnel connection" in x for x in STATE.get("log", []))
 
 
 def _asset() -> tuple[str, str]:
@@ -119,9 +130,8 @@ async def start(http, port: int, wait: float = 40) -> str | None:
     if pr and pr.returncode is None and STATE.get("url"):
         return STATE["url"]
     exe = await _binary(http)
-    # http2 вместо QUIC: UDP часто режут провайдеры и VPN, тогда адрес выдаётся, но не открывается
-    pr = await asyncio.create_subprocess_exec(exe, "tunnel", "--no-autoupdate", "--protocol", "http2",
-                                              "--url", f"http://127.0.0.1:{port}",
+    # протокол auto: сначала QUIC, при отказе сам переходит на http2
+    pr = await asyncio.create_subprocess_exec(exe, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}",
                                               stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     STATE.update(proc=pr, url=None, log=[])
 
@@ -151,6 +161,7 @@ async def start_lhr(port: int, wait: float = 30) -> str | None:
         return STATE["lhr_url"]
     ssh = shutil.which("ssh")
     if not ssh:
+        STATE["log"] = STATE.get("log", []) + ["lhr: в Windows не установлен OpenSSH (ssh)"]
         return None
     pr = await asyncio.create_subprocess_exec(
         ssh, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=" + os.devnull, "-o", "ServerAliveInterval=30",
