@@ -35,7 +35,7 @@ async def test_listing_short_entry_and_stop(cfg, conn, tg):
     bars.append(bar(d0 + 3, 1.1, 1.6, 1.0, 1.5))                               # вынос выше стопа
     assert await ls.run_daily((d0 + 4) * DAY + 60_000) == ["sent"]
     r = conn.execute("SELECT status, exit_reason, pnl_pct FROM listing_trades").fetchone()
-    assert r[0] == "closed" and r[1] == "stop" and r[2] == pytest.approx((-50 - 0.1) * 3.0 / 100)
+    assert r[0] == "closed" and r[1] == "stop" and r[2] == pytest.approx((-50 - 0.1) * cfg["listings"]["notional_pct"] / 100)
     assert "Stopped out" in tg.sent[-1][1]
 
 

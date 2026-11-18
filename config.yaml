@@ -1,4 +1,4 @@
-params_version: "v8"
+params_version: "v9"
 
 universe:
   top_n: 30
@@ -16,14 +16,14 @@ publishing:
 
 risk:
   deposit_usd: 1000
-  risk_min_pct: 1.0
-  risk_max_pct: 3.0
+  risk_min_pct: 1.5
+  risk_max_pct: 4.5
   public_leverage_cap: 25
   personal_leverage_cap: 10
   maintenance_margin_pct: 0.5
   # портфельный предохранитель
   max_open_trades: 3
-  max_open_risk_pct: 9.0
+  max_open_risk_pct: 13.5
   dd_half_pct: 30          # просадка от пика: риск вдвое меньше
   dd_pause_pct: 50         # новые входы стоп, владельцу уведомление
   dd_pause_days: 7         # длина паузы, потом просадка считается от нового пика
@@ -107,19 +107,19 @@ portfolio:
   ma_slow: 50
   allow_short: true
   vol_window: 30
-  target_vol: 0.5              # целевая годовая волатильность портфеля (0.4 спокойнее, 0.6 агрессивнее)
-  max_gross: 3.0               # потолок суммарного плеча
+  target_vol: 0.75             # целевая годовая волатильность портфеля (множитель 1.5 к базовым 0.5)
+  max_gross: 4.5               # потолок суммарного плеча
   min_consensus: 0.8           # торгуются только монеты, где согласны 5 из 6 трендовых голосов
   max_positions: 12
   neg_funding:                 # лонг монеты, когда фандинг за сутки ниже −0.1%: шорты переполнены
     threshold: 0.001
     hold_days: 3
-    size: 0.05                 # 5% капитала на монету
+    size: 0.075                # 7.5% капитала на монету
   post_hour_utc: 0             # пересчёт сразу после закрытия суток
 
 listings:
   enabled: true
-  notional_pct: 3.0            # шорт на каждый новый листинг, % капитала (убыток по стопу ~1.5%)
+  notional_pct: 4.5            # шорт на каждый новый листинг, % капитала (убыток по стопу ~2.3%)
   require_weak_first_day: true # только если первые сутки закрылись ниже открытия листинга
   stop_pct: 50                 # стоп при росте на 50% от входа
   hold_days: 60
