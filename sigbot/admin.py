@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from html import escape
 
 from . import ledger, postmortem, settings
 from .bloggers import Bloggers
@@ -105,15 +106,22 @@ class Admin:
             err = ": " + str(e)[:120]
         finally:
             await http.close()
+        local_ok, local_why = await phone.check(f"http://127.0.0.1:{port}", tok, tries=1)
+        if not local_ok:
+            lines.append(f"❌ Панель не отвечает даже на этом компьютере ({local_why}). Перезапусти бота.\n")
         if url:
-            ok = await phone.check(url, tok)
+            ok, why = await phone.check(url, tok)
             lines.append(f"🌍 <b>Откуда угодно</b> (мобильный интернет тоже):\n{url}/?token={tok}")
-            lines.append("✅ С компьютера открывается. Если на телефоне не грузится: российские провайдеры часто тормозят "
-                         "Cloudflare, включи на телефоне VPN и открой ещё раз.\n" if ok else
-                         "⚠️ Пока не открывается даже с компьютера: Cloudflare недоступен или адрес ещё не заработал. "
-                         "Подожди минуту и нажми «🔄 Обновить ссылку». Не помогло: включи VPN на компьютере.\n")
+            if ok:
+                lines.append("✅ Проверил с компьютера: открывается. Если телефон раньше пробовал старую ссылку и "
+                             "запомнил «сайт не найден», открой эту через пару минут.\n")
+            else:
+                errs = phone.tunnel_errors()
+                lines.append("⚠️ С компьютера пока не открывается. Причина: " + escape(why or "нет ответа")
+                             + ("\nCloudflare пишет: " + escape(" | ".join(e[-140:] for e in errs)) if errs else "")
+                             + "\nНажми «🔁 Новый адрес» и не открывай ссылку, пока бот не напишет ✅. Не поможет: пришли этот текст мне.\n")
         else:
-            lines.append(f"🌍 Туннель не запустился{err}. Проверь интернет или VPN и нажми ещё раз.\n")
+            lines.append(f"🌍 Туннель не запустился{escape(err)}. Нажми ещё раз.\n")
         ips = phone.lan_ips()
         if self.cfg["dashboard"].get("host") != "0.0.0.0":
             lines.append("🏠 Wi-Fi выключен: в config.yaml dashboard.host должен быть 0.0.0.0.\n")
@@ -121,11 +129,10 @@ class Admin:
             lines.append("🏠 <b>Дома по Wi-Fi</b> (телефон в той же сети, не мобильный интернет):\n"
                          + "\n".join(f"http://{ip}:{port}/?token={tok}" for ip in ips)
                          + "\nЕсли не открывается: Windows не пускает телефон. Один раз запусти в папке бота "
-                           "<b>allow_phone.bat</b> и согласись на запрос «Разрешить изменения». Если на компьютере включён VPN, "
-                           "попробуй без него.\n")
+                           "<b>allow_phone.bat</b> и согласись на запрос «Разрешить изменения».\n")
         lines.append("Ссылки с секретным ключом: не пересылай их. Открой один раз, дальше телефон помнит ключ. "
                      "Адрес 🌍 меняется при перезапуске бота, тогда нажми кнопку снова.")
-        return "\n".join(lines), kb([[("🔄 Обновить ссылку", "phone")], self.BACK])
+        return "\n".join(lines), kb([[("🔄 Обновить ссылку", "phone"), ("🔁 Новый адрес", "phone_new")], self.BACK])
 
     def mode_screen(self):
         m = self.eff()["publishing"]["mode"]
@@ -290,6 +297,10 @@ class Admin:
             return
         if data == "help":
             return await self.show(chat, self.help_screen(), mid)
+        if data == "phone_new":
+            from . import phone
+            phone.stop()
+            data = "phone"
         if data == "phone":
             await self.show(chat, ("📱 Запускаю доступ к панели, до 40 секунд…", kb([self.BACK])), mid)
             return await self.show(chat, await self.phone_screen(), mid)

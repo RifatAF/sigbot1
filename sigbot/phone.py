@@ -21,7 +21,7 @@ from . import settings
 log = logging.getLogger(__name__)
 BIN = Path("bin")
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
-STATE: dict = {"url": None, "proc": None}
+STATE: dict = {"url": None, "proc": None, "log": []}
 
 
 def token(conn) -> str:
@@ -58,19 +58,26 @@ def lan_ips() -> list[str]:
     return sorted(out, key=lambda x: (not x.startswith("192.168."), x))[:3]
 
 
-async def check(url: str, tok: str, tries: int = 12) -> bool:
-    """Открывается ли панель по адресу туннеля с этого компьютера (новому адресу нужно до полуминуты)."""
+async def check(url: str, tok: str, tries: int = 12) -> tuple[bool, str]:
+    """Открывается ли адрес с этого компьютера (новому адресу нужно до полуминуты). Второе значение: причина отказа."""
     import aiohttp
+    why = ""
     for _ in range(tries):
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(f"{url}/api/status?token={tok}", timeout=aiohttp.ClientTimeout(total=8)) as r:
                     if r.status == 200:
-                        return True
-        except Exception:
-            pass
+                        return True, ""
+                    why = f"ответ {r.status}: {(await r.text())[:80]}"
+        except Exception as e:
+            why = f"{type(e).__name__}: {str(e)[:120]}"
         await asyncio.sleep(2.5)
-    return False
+    return False, why
+
+
+def tunnel_errors(n: int = 3) -> list[str]:
+    """Последние ошибки cloudflared: почему туннель не соединился с Cloudflare."""
+    return [x for x in STATE.get("log", []) if " ERR " in x or "error" in x.lower()][-n:]
 
 
 def _asset() -> tuple[str, str]:
@@ -115,18 +122,24 @@ async def start(http, port: int, wait: float = 40) -> str | None:
     pr = await asyncio.create_subprocess_exec(exe, "tunnel", "--no-autoupdate", "--protocol", "http2",
                                               "--url", f"http://127.0.0.1:{port}",
                                               stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    STATE.update(proc=pr, url=None)
+    STATE.update(proc=pr, url=None, log=[])
 
     async def read():
         async for line in pr.stdout:
-            m = URL_RE.search(line.decode(errors="replace"))
+            text = line.decode(errors="replace").strip()
+            STATE["log"] = (STATE.get("log", []) + [text])[-60:]
+            m = URL_RE.search(text)
             if m and not STATE["url"]:
                 STATE["url"] = m.group(0)
     asyncio.create_task(read())
+    # ждём не только адрес, но и соединение с Cloudflare: если открыть адрес раньше, компьютер и телефон
+    # запоминают «такого сайта нет» на несколько минут, и ссылка не открывается, даже когда уже работает
     for _ in range(int(wait * 2)):
-        if STATE["url"] or pr.returncode is not None:
+        if pr.returncode is not None or (STATE["url"] and any("Registered tunnel connection" in x for x in STATE["log"])):
             break
         await asyncio.sleep(0.5)
+    if STATE["url"]:
+        await asyncio.sleep(8)
     return STATE["url"]
 
 

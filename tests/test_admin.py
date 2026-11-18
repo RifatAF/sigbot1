@@ -84,7 +84,7 @@ def test_every_menu_button_answers_in_russian(cfg, conn):
     text, markup = adm.menu()
     assert "Режим публикации" in text
     datas = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
-    skip = {"selfcheck", "testposts:ch", "testposts:me", "export", "phone"}       # ходят в сеть
+    skip = {"selfcheck", "testposts:ch", "testposts:me", "export", "phone", "phone_new"}       # ходят в сеть
     sub = ["strat", "tg:portfolio.enabled", "thr:0.02", "risk", "rk:risk_max_pct:0.1", "sched", "sch:1", "mode", "setmode:confirm"]
 
     async def run():
@@ -105,7 +105,7 @@ def test_phone_screen_lists_links(cfg, conn, monkeypatch):
         return "https://abc.trycloudflare.com"
 
     async def check(url, tok, tries=12):
-        return False
+        return ("127.0.0.1" in url), "ClientConnectorError: нет связи"
     monkeypatch.setattr(phone, "start", start)
     monkeypatch.setattr(phone, "check", check)
     monkeypatch.setattr(phone, "lan_ips", lambda: ["192.168.1.5"])
@@ -114,4 +114,4 @@ def test_phone_screen_lists_links(cfg, conn, monkeypatch):
     text, _ = asyncio.run(adm.phone_screen())
     tok = phone.token(conn)
     assert f"https://abc.trycloudflare.com/?token={tok}" in text and f"http://192.168.1.5:8787/?token={tok}" in text
-    assert "allow_phone.bat" in text and "Пока не открывается" in text
+    assert "allow_phone.bat" in text and "пока не открывается" in text and "нет связи" in text and "VPN" not in text
