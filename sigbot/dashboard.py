@@ -28,6 +28,7 @@ button,input{background:var(--card);color:var(--txt);border:1px solid #2b3345;bo
 button{cursor:pointer}button:disabled{opacity:.35;cursor:default}
 .seg{display:inline-flex;background:var(--card);border:1px solid #2b3345;border-radius:9px;padding:2px}
 .seg button{border:0;background:none;padding:6px 12px;border-radius:7px}.seg button.on{background:var(--b)}
+#paper{margin:0 16px 12px;padding:10px 14px;border-radius:10px;background:var(--card);font-size:13px;line-height:1.6;color:#a9b1c2;display:none}#paper b{color:var(--txt)}
 #status{margin:10px 16px 0;padding:10px 14px;border-radius:8px;background:var(--card);display:none}
 .bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:8px 0 2px}.bar i{display:block;height:100%;background:var(--b);transition:width .6s}
 .st-ok .bar i{background:var(--g)}.warn{color:var(--y);font-size:13px;margin-top:6px}
@@ -78,7 +79,7 @@ body.shot .why{display:none}body.shot main{grid-template-columns:1fr;padding:8px
 <div data-k="capitulation"><b>⚡ Капитуляция</b> · редкий часовой сигнал после сильного слива с падением открытого интереса. Есть стоп и две цели.</div>
 <div data-k="listing"><b>🆕 Шорт листинга</b> · шорт новых монет на фьючерсах, если первый день слабый. Держим до 60 дней, широкий стоп +50%.</div>
 </div>
-<div class="kpi" id="kpi"></div>
+<div class="kpi" id="kpi"></div><div id="paper"></div>
 <main>
 <section class="panel">
 <div class="tools"><span class="seg" id="kinds"><button data-k="all">Все</button><button data-k="trend">🧭</button><button data-k="capitulation">⚡</button><button data-k="listing">🆕</button></span>
@@ -95,7 +96,7 @@ body.shot .why{display:none}body.shot main{grid-template-columns:1fr;padding:8px
 const q = new URLSearchParams(location.search), tok = q.get('token') ? 'token='+q.get('token') : '';
 const S = {source: q.get('source') || 'live', kind: 'all', open: false, text: ''};
 if (q.get('shot')) document.body.classList.add('shot');
-let F = {items: [], summary: {}}, view = [], cur = null, shown = 150, cs = [], times = [], tf = '1d', ST = {};
+let PA = null, F = {items: [], summary: {}}, view = [], cur = null, shown = 150, cs = [], times = [], tf = '1d', ST = {};
 const $ = id => document.getElementById(id), G = '#3ddc97', R = '#ff6b6b', B = '#5b8cff';
 const KIND = {trend: '🧭 Тренд', capitulation: '⚡ Капитуляция', listing: '🆕 Шорт листинга'};
 const px = p => p == null ? '—' : '$' + (p >= 1000 ? p.toLocaleString('en-US',{maximumFractionDigits:0}) : p >= 10 ? p.toFixed(2) : p >= 1 ? p.toFixed(3) : p.toPrecision(4));
@@ -214,7 +215,7 @@ function ticket(t){
   const res = t.result_pct, R = t.kind==='capitulation' && t.r != null ? ` · ${t.r>0?'+':''}${t.r.toFixed(2)}R` : '';
   const total = res == null ? 'считается' : `<b class="${res>0?'pos':'neg'}">${sg(res,2)} депозита</b>${t.move_pct!=null ? ` <span class="mut">(цена в среднем ${sg(t.move_pct,1)})</span>` : ''}${R}`;
   return `<div class="tk">${rows.map(([a,b,c,d,cl,st]) => `<div class="tr ${cl} ${st||''}"><span>${a}</span><b>${b}</b><i>${c}</i><em>${d}</em></div>`).join('')}
-    <div class="tr tot"><span>${t.open ? 'Итог сейчас' : 'Итог'}</span><em>${total}</em></div></div>`;
+    <div class="tr tot"><span>${t.open ? 'Итог сейчас' : 'Итог'}</span><em>${total}</em></div>${paperRows(t)}</div>`;
 }
 async function select(t){
   cur = t; renderList(false);
@@ -224,6 +225,23 @@ async function select(t){
   $('story').innerHTML = ticket(t) + `<div class="why">${why(t)}${P ? `<br><br>Сиреневая зона на графике: куда обычно шла цена после ${P.n} прошлых сигналов этого типа. Пунктир: медиана, тёмная зона: половина случаев, светлая: 8 из 10. Это статистика, а не прогноз этой монеты.` : ''}</div>`; $('cards').innerHTML = '';
   const i = view.indexOf(t); $('prev').disabled = i >= view.length-1; $('next').disabled = i <= 0;
   await showChart(t);
+}
+// ---------- бумажный счёт
+const usd = v => v == null ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(2);
+function renderPaper(){
+  const b = $('paper'); if (!PA || !PA.accounts) { b.style.display='none'; return; }
+  b.style.display='block';
+  b.innerHTML = `🧪 <b>Бумажная торговля</b> ${PA.enabled ? '' : '(выключена)'}: депозит <b>${usd(PA.start)}</b> на каждой бирже, плечо <b>x${PA.leverage}</b>, маржа изолированная. `+
+    `Минимальная позиция по правилам биржи (обычно $5, у BTC и ETH больше): при x${PA.leverage} это маржа от ${usd(5/PA.leverage)}.<br>` +
+    PA.accounts.map(a => `<b>${a.exchange[0].toUpperCase()+a.exchange.slice(1)}</b>: ${usd(a.equity)} `+
+      `<span class="${a.equity>=a.start?'pos':'neg'}">(${a.equity>=a.start?'+':''}${((a.equity/a.start-1)*100).toFixed(1)}%)</span>, свободно ${usd(a.free)}, открыто ${a.open}, комиссии ${usd(a.fees)}`).join(' · ');
+}
+function paperRows(t){
+  const tr = PA && PA.trades && t.ref ? PA.trades[t.kind+':'+t.ref] : null; if (!tr) return '';
+  return tr.map(x => { const notional = x.qty * x.entry;
+    return `<div class="tr"><span>🧪 ${x.exchange[0].toUpperCase()+x.exchange.slice(1)}</span><b>${usd(notional)}</b><i>x${x.leverage}</i>`+
+      `<em>позиция ${usd(notional)}, маржа ${usd(x.margin)} из депозита, ликвидация ${px(x.liq)}. `+
+      `${x.status==='open' ? 'Открыто '+Math.round(x.open_qty/x.qty*100)+'%' : 'Закрыта'}, итог <b class="${x.realized>=0?'pos':'neg'}">${usd(x.realized)}</b> с комиссиями</em></div>`; }).join('');
 }
 // ---------- лента
 function filter(){
@@ -255,6 +273,7 @@ async function load(){
   document.querySelectorAll('[data-src]').forEach(b => b.classList.toggle('on', b.dataset.src===S.source));
   document.querySelectorAll('#kinds button, #how div').forEach(b => b.classList.toggle('on', b.dataset.k===S.kind));
   F = await j('api/feed?source='+S.source); F.items = F.items || []; filter(); renderKpi(); renderList();
+  try { PA = S.source==='live' ? await j('api/paper') : null; } catch(e) { PA = null; } renderPaper();
   const pick = q.get('pick');                     // ?pick=SYMBOL:время входа — открыть сразу эту сделку (картинка для Telegram)
   if (pick) { const [ps, pt] = pick.split(':'); const it = F.items.find(x => x.symbol===ps && String(x.entry_time)===pt);
     if (it) { if (!view.includes(it)) view.unshift(it); await select(it); setTimeout(() => { redraw(); window.__ready = true; }, 400); return; } }
@@ -752,7 +771,7 @@ def make_app(cfg, conn) -> web.Application:
         from . import feed as fd
         for r in conn.execute("SELECT * FROM trend_signals ORDER BY open_day"):
             st = json.loads(r["state"]) if r["state"] else {"side": r["side"], "entry": r["entry"], "rem": 1.0, "exits": []}
-            it = {"kind": "trend", "symbol": r["symbol"], "side": r["side"], "entry_time": r["open_day"] // 1000 + 86400,
+            it = {"kind": "trend", "ref": str(r["id"]), "symbol": r["symbol"], "side": r["side"], "entry_time": r["open_day"] // 1000 + 86400,
                   "exit_time": r["close_day"] // 1000 if r["close_day"] else None, "entry": r["entry"],
                   "exit": r["exit_price"], "size_pct": r["size_pct"], "exit_level": r["exit_level"],
                   "move_pct": r["move_pct"], "result_pct": r["result_pct"], "open": r["status"] == "open",
@@ -765,7 +784,7 @@ def make_app(cfg, conn) -> web.Application:
                     it["move_pct"], it["result_pct"] = fd.realized(st, r["size_pct"], fee, mark=lastp[0])
             out.append(it)
         for t in live_trades():
-            out.append({"kind": "capitulation", "symbol": t["symbol"], "side": t["side"], "entry_time": t["entry_time"],
+            out.append({"kind": "capitulation", "ref": str(t["id"]), "symbol": t["symbol"], "side": t["side"], "entry_time": t["entry_time"],
                         "exit_time": t["exit_time"], "entry": t["entry"], "stop": t["stop"], "tp1": t["tp1"], "tp2": t["tp2"],
                         "risk_pct": t["risk_pct"], "leverage": t["leverage"], "r": t["r"], "open": t["r"] is None,
                         "tp1_part": 0.5, "tp2_part": 0.5,
@@ -773,7 +792,7 @@ def make_app(cfg, conn) -> web.Application:
                                   for e in t.get("exits_full", [])],
                         "result_pct": round(t["r"] * t["risk_pct"], 2) if t["r"] is not None and t["risk_pct"] else None})
         for r in conn.execute("SELECT * FROM listing_trades WHERE status IN ('open','closed')"):
-            out.append({"kind": "listing", "symbol": r["symbol"], "side": "short", "entry_time": r["entry_ts"] // 1000,
+            out.append({"kind": "listing", "ref": r["symbol"], "symbol": r["symbol"], "side": "short", "entry_time": r["entry_ts"] // 1000,
                         "exit_time": r["exit_ts"] // 1000 if r["exit_ts"] else None, "entry": r["entry"], "stop": r["stop"],
                         "exit": r["exit_price"], "size_pct": r["notional_pct"], "result_pct": r["pnl_pct"],
                         "exchange": r["exchange"] if "exchange" in r.keys() else None,
@@ -796,6 +815,24 @@ def make_app(cfg, conn) -> web.Application:
             extra = {"paths": bt.get("paths", {}), "plan": bt.get("plan")}
         return web.json_response({"items": items, "summary": {"all": fd.summary(items, 30)}, **extra})
 
+    async def paper_api(_):
+        """Бумажные счета: депозит, капитал, плечо и сделки по сигналам (ключ kind:ref)."""
+        from .demo import DemoTrader
+        dt = DemoTrader(cfg, conn)
+        pc = dt.pc()
+        accs = []
+        for ex in dt.exchanges():
+            a = dt.account(ex)
+            accs.append({"exchange": ex, "start": a["start_usd"], "equity": round(dt.equity(ex), 2),
+                         "free": round(dt.free(ex), 2), "fees": round(a["fees"], 2), "funding": round(a["funding"], 2),
+                         "open": conn.execute("SELECT COUNT(*) FROM demo_trades WHERE exchange=? AND status='open'", (ex,)).fetchone()[0]})
+        trades = {}
+        for r in conn.execute("SELECT * FROM demo_trades ORDER BY id"):
+            trades.setdefault(f"{r['kind']}:{r['ref']}", []).append(
+                {k: r[k] for k in ("exchange", "qty", "open_qty", "entry", "margin", "leverage", "liq", "realized", "fees", "status")})
+        return web.json_response({"enabled": dt.on(), "leverage": pc.get("leverage", 5), "start": pc.get("start_usd", 100),
+                                  "accounts": accs, "trades": trades})
+
     async def status(_):
         from . import autoprep
         return web.json_response(autoprep.STATUS)
@@ -813,6 +850,7 @@ def make_app(cfg, conn) -> web.Application:
     app.router.add_get("/api/stats", stats)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/status", status)
+    app.router.add_get("/api/paper", paper_api)
     app.router.add_get("/api/feed", feed_api)
     app.router.add_get("/overview", overview_page)
     app.router.add_get("/api/overview", overview_api)

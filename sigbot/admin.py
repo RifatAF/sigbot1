@@ -102,10 +102,16 @@ class Admin:
         on = pc.get("enabled", True)
         text = ("🧪 <b>Бумажная торговля</b> " + ("✅ вкл" if on else "❌ выкл") + "\n"
                 f"Виртуальные счета по {pc.get('start_usd', 100)}$: бот торгует свои сигналы как живой трейдер. "
-                f"Цены и комиссии бирж, плечо x{pc.get('leverage', 5)}, фандинг, ликвидация. Ордера на биржу не уходят.\n\n"
+                f"Цены и комиссии бирж, плечо x{pc.get('leverage', 5)} (меняется кнопками ниже, действует на новые сделки), "
+                "фандинг, ликвидация. Ордера на биржу не уходят.\n\n"
                 + await dt.report())
-        return text, kb([[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")],
-                         [("♻️ Начать заново со 100$", "demo_reset")], self.BACK])
+        lev = int(pc.get("leverage", 5))
+        text += (f"\n\nМинимальная позиция по правилам биржи (обычно 5$, у BTC и ETH больше). При плече x{lev} "
+                 f"на неё уходит маржа от {5 / lev:.2f}$. Если сигнал меньше минимума, бот поднимает позицию до минимума, "
+                 "а если маржи не хватает, пропускает сделку и пишет почему.")
+        levs = [(("• " if lev == x else "") + f"x{x}", f"plev:{x}") for x in (1, 3, 5, 10, 20)]
+        return text, kb([[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], levs,
+                         [(f"♻️ Начать заново с {pc.get('start_usd', 100)}$", "demo_reset")], self.BACK])
 
     async def snaps_screen(self):
         """Открытые и последние закрытые сигналы кнопками: нажал, бот прислал картинку графика."""
@@ -353,6 +359,9 @@ class Admin:
             return
         if data == "help":
             return await self.show(chat, self.help_screen(), mid)
+        if data.startswith("plev:"):
+            settings.put(self.conn, "paper.leverage", int(data[5:]))
+            return await self.show(chat, await self.demo_screen(), mid)
         if data == "demo_reset":
             return await self.show(chat, ("Закрыть все бумажные позиции и начать заново со стартового депозита?",
                                           kb([[("♻️ Да, заново", "demo_reset_yes"), ("Отмена", "demo")]])), mid)

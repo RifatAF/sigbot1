@@ -17,7 +17,7 @@ def test_endpoints_answer():
                       "/api/candles?symbol=BTCUSDT&center=1800000000", "/api/trades?source=backtest",
                       "/api/trades?source=live&symbol=BTCUSDT", "/api/marks?symbol=BTCUSDT&source=backtest",
                       "/api/stats?source=backtest", "/api/stats", "/api/status", "/api/live", "/overview",
-                      "/coins", "/api/feed?source=live", "/api/feed?source=backtest"):
+                      "/coins", "/api/feed?source=live", "/api/feed?source=backtest", "/api/paper"):
                 r = await c.get(u)
                 assert r.status == 200, u
             d = await (await c.get("/api/candles?symbol=BTCUSDT&tf=1d")).json()

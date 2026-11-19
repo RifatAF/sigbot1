@@ -86,6 +86,19 @@ class DemoTrader:
             await http.close()
         return float(r[0]) if r else None
 
+    async def rules(self, ex: str, sym: str) -> dict:
+        """Правила биржи по монете: минимальная сумма позиции, минимальное количество и шаг количества.
+        Берутся с открытого API биржи раз в сутки. Нет ответа: минимум 5$ и шаг без ограничений."""
+        cache = settings.get(self.conn, f"paper_rules_{ex}") or {}
+        if not self.prices and time.time() - cache.get("_ts", 0) > 86400:
+            try:
+                cache = await _fetch_rules(ex)
+                cache["_ts"] = time.time()
+                settings.put(self.conn, f"paper_rules_{ex}", cache)
+            except Exception as e:
+                log.info("paper rules %s: %s", ex, e)
+        return cache.get(sym) or {"min_notional": 5.0, "min_qty": 0.0, "step": 0.0}
+
     def _fill(self, px: float, buy: bool) -> float:
         slip = float(self.pc().get("slippage_pct", 0.02)) / 100
         return px * (1 + slip if buy else 1 - slip)
@@ -106,18 +119,22 @@ class DemoTrader:
             if not px:
                 await self._say(f"🧪 {name}: {symbol.replace('USDT', '')} не открыт, нет цены")
                 continue
-            eq = self.equity(ex)
+            eq, rule, coin = self.equity(ex), await self.rules(ex, symbol), symbol.replace("USDT", "")
             notional = eq * notional_pct / 100
-            margin = notional / lev
-            if notional < 5:
-                await self._say(f"🧪 {name}: {symbol.replace('USDT', '')} не открыт: позиция {notional:.2f}$ меньше минимума биржи 5$")
-                continue
-            if margin > self.free(ex):
-                await self._say(f"🧪 {name}: {symbol.replace('USDT', '')} не открыт: не хватает свободной маржи "
-                                f"({margin:.2f}$ нужно, {self.free(ex):.2f}$ есть)")
-                continue
+            # минимум биржи: сумма позиции и минимальное количество монет (у BTC и ETH он заметно больше 5$)
+            need = max(rule["min_notional"], rule["min_qty"] * px)
+            note = ""
+            if notional < need:
+                note = f" (по сигналу {notional:.2f}$, поднял до минимума биржи {need:.2f}$)"
+                notional = need * 1.001
             fill = self._fill(px, side == "long")
-            qty = notional / fill
+            qty = _step(notional / fill, rule["step"], up=bool(note))
+            notional = qty * fill
+            margin = notional / lev
+            if margin > self.free(ex):
+                await self._say(f"🧪 {name}: {coin} не открыт. Минимум биржи {need:.2f}$ при плече x{lev} требует маржу "
+                                f"{margin:.2f}$, а свободно {self.free(ex):.2f}$")
+                continue
             fee = notional * FEES.get(ex, 0.05) / 100
             sd = 1 if side == "long" else -1
             liq = fill * (1 - sd / lev + sd * MMR)
@@ -127,7 +144,7 @@ class DemoTrader:
                               (ex, kind, ref, symbol, side, qty, qty, fill, int(time.time() * 1000), margin, lev, liq, fee,
                                -fee, int(time.time() * 1000) // (8 * HOUR)))       # итог сделки с комиссией входа
             await self._say(f"🧪 {name}: {'лонг' if side == 'long' else 'шорт'} {symbol.replace('USDT', '')} по {fill:g}, "
-                            f"позиция {notional:.2f}$ (маржа {margin:.2f}$, плечо x{lev}), комиссия {fee:.3f}$")
+                            f"позиция {notional:.2f}$ (маржа {margin:.2f}$, плечо x{lev}){note}, комиссия {fee:.3f}$")
 
     async def reduce(self, kind: str, ref: str, part: float | None, why: str):
         """Закрыть долю part исходной позиции (None: всё, что осталось)."""
@@ -139,8 +156,13 @@ class DemoTrader:
 
     async def _close(self, r, px: float, part: float | None, why: str, liquidated: bool = False):
         ex, sd = r["exchange"], 1 if r["side"] == "long" else -1
-        qty = r["open_qty"] if part is None else min(r["open_qty"], r["qty"] * part)
-        if r["open_qty"] - qty < r["qty"] * 1e-6:
+        rule = await self.rules(ex, r["symbol"])
+        qty = r["open_qty"] if part is None else min(r["open_qty"], _step(r["qty"] * part, rule["step"]))
+        if part is not None and qty < max(rule["min_qty"], rule["step"], 1e-12):
+            await self._say(f"🧪 Бумажный {ex.capitalize()}: {why}, но {symbol_name(r)}: часть меньше минимального количества "
+                            "биржи, держу всю позицию до следующего выхода")
+            return
+        if r["open_qty"] - qty < max(rule["step"], r["qty"] * 1e-6):
             qty = r["open_qty"]
         fill = px if liquidated else self._fill(px, sd < 0)
         gross = (fill - r["entry"]) * qty * sd
@@ -223,6 +245,45 @@ class DemoTrader:
                 lines.append(f"  … и ещё {len(op) - 10}")
             lines.append("")
         return "\n".join(lines).strip()
+
+
+def _step(q: float, step: float, up: bool = False) -> float:
+    if not step:
+        return q
+    import math
+    n = math.ceil(q / step - 1e-9) if up else math.floor(q / step + 1e-9)
+    return round(n * step, 12)
+
+
+async def _fetch_rules(ex: str) -> dict:
+    from .http import Http
+    http, out = Http(retries=2), {}
+    try:
+        if ex == "binance":
+            info = await http.get_json("https://fapi.binance.com/fapi/v1/exchangeInfo")
+            for x in info.get("symbols", []):
+                f = {y["filterType"]: y for y in x.get("filters", [])}
+                lot = f.get("MARKET_LOT_SIZE") or f.get("LOT_SIZE") or {}
+                out[x["symbol"]] = {"min_notional": float(f.get("MIN_NOTIONAL", {}).get("notional", 5)),
+                                    "min_qty": float(lot.get("minQty", 0)), "step": float(lot.get("stepSize", 0))}
+        else:
+            cursor = ""
+            for _ in range(10):
+                d = await http.get_json("https://api.bybit.com/v5/market/instruments-info",
+                                        params={"category": "linear", "limit": 1000, **({"cursor": cursor} if cursor else {})})
+                r = d.get("result") or {}
+                for x in r.get("list", []):
+                    lf = x.get("lotSizeFilter", {})
+                    out[x["symbol"]] = {"min_notional": float(lf.get("minNotionalValue") or 5),
+                                        "min_qty": float(lf.get("minOrderQty") or 0), "step": float(lf.get("qtyStep") or 0)}
+                cursor = r.get("nextPageCursor")
+                if not cursor:
+                    break
+    finally:
+        await http.close()
+    if not out:
+        raise RuntimeError("пустой ответ")
+    return out
 
 
 def symbol_name(r) -> str:
