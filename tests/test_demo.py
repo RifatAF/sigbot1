@@ -132,6 +132,6 @@ def test_balance_profile_is_default_and_scales_risk(cfg, conn):
     px = [100.0]
     dt, said = make(cfg, conn, px)
     settings.put(conn, "paper.exchanges", ["binance"])
-    asyncio.run(dt.open("listing", "X", "XUSDT", "short", 4.5, stop=150.0))   # 1.5% × 1.6 = 2.4$ при стопе +50%
+    asyncio.run(dt.open("listing", "X", "XUSDT", "short", 4.5, stop=120.0))   # 1.5% × 1.6 = 2.4$ при стопе +20%
     r = conn.execute("SELECT * FROM demo_trades").fetchone()
-    assert r["risk_usd"] == pytest.approx(2.4, rel=0.03) and r["qty"] * r["entry"] == pytest.approx(4.8, rel=0.03)
+    assert r["risk_usd"] == pytest.approx(2.4, rel=0.03) and r["qty"] * r["entry"] == pytest.approx(12.0, rel=0.03)
