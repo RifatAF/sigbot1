@@ -119,8 +119,10 @@ class Cloud:
                     STATE["err"] = str(e)[:200]
                     log.warning("cloud: %s", e)
                     if first:
-                        say(f"⚠️ Панель в облаке: не отправилось ({str(e)[:120]}), повтор через минуту")
-                        await asyncio.sleep(every_s)
+                        if not STATE.get("warned"):
+                            STATE["warned"] = True
+                            say(f"⚠️ Панель в облаке: не отправилось ({str(e)[:120]}), пробую раз в 5 минут")
+                        await asyncio.sleep(every_s * 5)
                         continue
                 first = False
                 await asyncio.sleep(every_s)
