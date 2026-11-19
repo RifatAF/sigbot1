@@ -135,3 +135,15 @@ def test_balance_profile_is_default_and_scales_risk(cfg, conn):
     asyncio.run(dt.open("listing", "X", "XUSDT", "short", 4.5, stop=120.0))   # 1.5% × 1.6 = 2.4$ при стопе +20%
     r = conn.execute("SELECT * FROM demo_trades").fetchone()
     assert r["risk_usd"] == pytest.approx(2.4, rel=0.03) and r["qty"] * r["entry"] == pytest.approx(12.0, rel=0.03)
+
+
+def test_trend_risk_follows_btc_layers(cfg, conn):
+    px = [100.0]
+    dt, said = make(cfg, conn, px)
+    settings.put(conn, "paper.risk_profile", "careful")
+    settings.put(conn, "paper.exchanges", ["binance"])
+    settings.put(conn, "btc_layers_state", {"signal": -0.9})
+    asyncio.run(dt.open("trend", "1", "AUSDT", "long", 13.9, stop=90.0))     # против модели: 2.5% × 0.5
+    asyncio.run(dt.open("trend", "2", "BUSDT", "short", 13.9, stop=110.0))   # по пути: 2.5% × 1.3
+    a, b = [r["risk_usd"] for r in conn.execute("SELECT risk_usd FROM demo_trades ORDER BY id")]
+    assert a == pytest.approx(1.25, rel=0.03) and b == pytest.approx(3.25, rel=0.03) and "против BTC Layers" in said[0]

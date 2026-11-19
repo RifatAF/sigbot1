@@ -129,16 +129,31 @@ class DemoTrader:
         strength = min(float(pc.get("strength_cap", 2.0)), notional_pct / med) if med else 1.0
         mult = PROFILES.get(pc.get("risk_profile", "balance"), PROFILES["balance"])[0]
         risk_pct = float(pc["risk_pct"][kind]) * max(strength, 0.25) * mult
+        lf = self.layers_factor(kind, px, stop) if pc.get("layers_filter", True) else (1.0, "")
+        risk_pct *= lf[0]
         left = float(pc.get("max_open_risk_pct", 20)) * mult / 100 * eq - self.open_risk(ex)
         risk_usd = eq * risk_pct / 100 * rem
         if risk_usd > left + 1e-9:                       # лимит общего риска: сделка пропускается (урезать хуже на истории)
             risk_usd = 0.0
-        note = f"риск {risk_usd:.2f}$ ({risk_usd / eq * 100:.1f}% капитала) до стопа {stop:g}"
+        note = f"риск {risk_usd:.2f}$ ({risk_usd / eq * 100:.1f}% капитала) до стопа {stop:g}{lf[1]}"
         lev = lev_fixed
         if pc.get("auto_leverage", True):
             # ликвидация на расстоянии 1/плечо минус поддерживающая маржа: держим её на 1% цены дальше стопа
             lev = max(1, min(int(pc.get("max_leverage", 50)), int(1 / (dist + MMR + 0.01))))
         return {"notional": risk_usd / dist, "lev": lev, "risk_usd": risk_usd, "note": note, "min_risk": 1e-9}
+
+    def layers_factor(self, kind: str, px: float, stop: float) -> tuple[float, str]:
+        """Рынок в целом: тренд по монете в ту же сторону, что BTC Layers, получает больше риска, против: меньше."""
+        if kind != "trend":
+            return 1.0, ""
+        st = settings.get(self.conn, "btc_layers_state") or {}
+        x = st.get("signal")
+        if x is None or abs(x) < 1e-9:
+            return 1.0, ""
+        long = stop < px
+        if (x > 0) == long:
+            return 1.3, ", x1.3: по пути с BTC Layers"
+        return 0.5, ", x0.5: против BTC Layers"
 
     async def open(self, kind: str, ref: str, symbol: str, side: str, notional_pct: float, exchange: str | None = None,
                    rem: float = 1.0, stop: float | None = None):
