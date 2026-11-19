@@ -98,6 +98,7 @@ def test_open_live_signals_button(cfg, conn):
 
 
 def test_risk_sizing_leverage_and_open_risk_limit(cfg, conn):
+    settings.put(conn, "paper.risk_profile", "careful")
     """От риска: на стопе теряем 2.5% капитала, плечо такое, что ликвидация дальше стопа, общий риск не больше 20%."""
     px = [100.0]
     dt, said = make(cfg, conn, px)
@@ -118,9 +119,19 @@ def test_risk_sizing_leverage_and_open_risk_limit(cfg, conn):
 
 
 def test_exchange_minimum_does_not_break_risk(cfg, conn):
+    settings.put(conn, "paper.risk_profile", "careful")
     px = [50000.0]
     dt, said = make(cfg, conn, px)
     settings.put(conn, "paper.exchanges", ["binance"])
     settings.put(conn, "paper_rules_binance", {"_ts": 9e12, "BTCUSDT": {"min_notional": 100.0, "min_qty": 0.001, "step": 0.001}})
     asyncio.run(dt.open("trend", "1", "BTCUSDT", "long", 13.9, stop=45000.0))   # план 25$, минимум 100$: риск 10$ > 2×2.5$
     assert not conn.execute("SELECT 1 FROM demo_trades").fetchone() and "Риск-менеджмент важнее" in said[-1]
+
+
+def test_balance_profile_is_default_and_scales_risk(cfg, conn):
+    px = [100.0]
+    dt, said = make(cfg, conn, px)
+    settings.put(conn, "paper.exchanges", ["binance"])
+    asyncio.run(dt.open("listing", "X", "XUSDT", "short", 4.5, stop=150.0))   # 1.5% × 1.6 = 2.4$ при стопе +50%
+    r = conn.execute("SELECT * FROM demo_trades").fetchone()
+    assert r["risk_usd"] == pytest.approx(2.4, rel=0.03) and r["qty"] * r["entry"] == pytest.approx(4.8, rel=0.03)

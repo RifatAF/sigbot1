@@ -15,6 +15,9 @@ from . import settings
 log = logging.getLogger(__name__)
 HOUR = 3_600_000
 FEES = {"binance": 0.05, "bybit": 0.055, "layers": 0.05}   # layers: отдельный счёт модели BTC Layers, цены и правила Binance          # тейкер, % от объёма
+PROFILES = {"careful": (1.0, "Осторожный", "+82% в год, просадка до −28%"),
+            "balance": (1.6, "Баланс", "+133% в год, просадка до −41%"),
+            "aggressive": (2.0, "Агрессивный", "+165% в год, просадка до −49%")}   # история 2020–2026, все стратегии вместе
 MMR = 0.005                                       # поддерживающая маржа: ликвидация, когда убыток съел маржу почти целиком
 
 
@@ -124,8 +127,9 @@ class DemoTrader:
             return {"notional": 0, "lev": lev_fixed, "risk_usd": None, "note": ""}
         med = (pc.get("strength_median") or {}).get(kind)
         strength = min(float(pc.get("strength_cap", 2.0)), notional_pct / med) if med else 1.0
-        risk_pct = float(pc["risk_pct"][kind]) * max(strength, 0.25)
-        left = float(pc.get("max_open_risk_pct", 20)) / 100 * eq - self.open_risk(ex)
+        mult = PROFILES.get(pc.get("risk_profile", "balance"), PROFILES["balance"])[0]
+        risk_pct = float(pc["risk_pct"][kind]) * max(strength, 0.25) * mult
+        left = float(pc.get("max_open_risk_pct", 20)) * mult / 100 * eq - self.open_risk(ex)
         risk_usd = eq * risk_pct / 100 * rem
         if risk_usd > left + 1e-9:                       # лимит общего риска: сделка пропускается (урезать хуже на истории)
             risk_usd = 0.0

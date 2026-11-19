@@ -100,8 +100,11 @@ class Admin:
         dt = DemoTrader(self.cfg, self.conn)
         pc = self.eff().get("paper", {})
         on = pc.get("enabled", True)
+        from .demo import PROFILES
         risk = pc.get("sizing", "risk") == "risk"
-        rk = pc.get("risk_pct") or {}
+        prof = pc.get("risk_profile", "balance")
+        m, pname, pstat = PROFILES.get(prof, PROFILES["balance"])
+        rk = {k: round(float(v) * m, 2) for k, v in (pc.get("risk_pct") or {}).items()}
         text = ("🧪 <b>Бумажная торговля</b> " + ("✅ вкл" if on else "❌ выкл") + "\n"
                 f"Виртуальные счета по {pc.get('start_usd', 100)}$: бот торгует свои сигналы как живой трейдер. "
                 "Цены и комиссии бирж, фандинг, ликвидация. Ордера на биржу не уходят.\n\n")
@@ -112,17 +115,18 @@ class Admin:
                      "• Размер позиции = риск / расстояние до стопа. Стоп дальше, позиция меньше, потеря та же.\n"
                      f"• Плечо бот ставит сам, до x{pc.get('max_leverage', 50)}: максимальное, при котором ликвидация дальше стопа. "
                      "В сделке лежит минимум денег, а потеря на стопе не меняется.\n"
-                     f"• Все открытые сделки вместе на стопах теряют не больше {pc.get('max_open_risk_pct', 20)}% капитала: "
-                     "новая сделка урезается или пропускается.\n"
+                     f"• Все открытые сделки вместе на стопах теряют не больше {float(pc.get('max_open_risk_pct', 20)) * m:.0f}% "
+                     "капитала: сделка сверх лимита пропускается.\n"
                      "• Если минимум биржи даёт риск вдвое больше плана, сделка пропускается.\n"
-                     f"На истории 2020–2026 так: +82% в год при просадке до −28%. Было, по доле из сигнала: +120% в год при "
-                     "просадке до −48%. Прибыль ниже, зато просадка почти вдвое меньше: на один процент просадки прибыли больше.\n\n")
+                     f"Профиль <b>{pname}</b>: на истории 2020–2026 {pstat}. Для сравнения, старый способ (доля из сигнала): "
+                     "+120% в год, просадка до −48%.\n\n")
         text += await dt.report()
         lev = int(pc.get("leverage", 5))
         if not risk:
             text += (f"\n\nПлечо x{lev}. Минимальная позиция по правилам биржи (обычно 5$, у BTC и ETH больше): при x{lev} "
                      f"на неё уходит маржа от {5 / lev:.2f}$.")
         levs = [(("• " if lev == x else "") + f"x{x}", f"plev:{x}") for x in (1, 3, 5, 10, 20)] if not risk else []
+        profs = [[(("• " if prof == k else "") + v[1], f"pprof:{k}") for k, v in PROFILES.items()]] if risk else []
         rows_mode = [("🛡 От риска ✅" if risk else "🛡 Включить торговлю от риска", "psz:risk" if not risk else "noop"),
                      ("📊 Доля из сигнала" + (" ✅" if not risk else ""), "psz:signal" if risk else "noop")]
         total, miss = dt.live_counts()
@@ -130,7 +134,7 @@ class Admin:
         if total:
             text += (f"\n\nЖивых открытых сигналов: {total}, на бумажном счёте нет: {miss}. "
                      "Кнопка «Открыть живые сигналы» откроет их по текущей цене (не по цене сигнала).")
-        return text, kb(rows + [[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], rows_mode] + ([levs] if levs else []) + [
+        return text, kb(rows + [[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], rows_mode] + profs + ([levs] if levs else []) + [
                          [(f"♻️ Начать заново с {pc.get('start_usd', 100)}$", "demo_reset")], self.BACK])
 
     async def snaps_screen(self):
@@ -450,6 +454,9 @@ class Admin:
             await self.tg.send_message(chat, f"🧪 Открыто сигналов: {n}" + (f", уже были на счёте: {had}" if had else "")
                                        + ". Подробности по каждой сделке выше, итог ниже.")
             return await self.tg.send_message(chat, *await self.demo_screen())
+        if data.startswith("pprof:"):
+            settings.put(self.conn, "paper.risk_profile", data[6:])
+            return await self.show(chat, await self.demo_screen(), mid)
         if data.startswith("psz:"):
             settings.put(self.conn, "paper.sizing", data[4:])
             return await self.show(chat, await self.demo_screen(), mid)
