@@ -148,69 +148,47 @@ class Admin:
         await self.tg.send_photo(chat, png, snap.caption(it))
 
     async def phone_screen(self):
-        from . import phone
+        """Панель на телефоне: перебирает способы доступа и даёт первую ссылку, которая реально открылась снаружи."""
+        from . import cloud, phone
         from .http import Http
         port, tok = self.cfg["dashboard"]["port"], phone.token(self.conn)
         lines = ["📱 <b>Панель на телефоне</b>\n"]
-        from . import cloud
-        cl = cloud.link(self.cfg, self.conn)
-        if cl:
-            st = cloud.STATE
-            ago = f"{(time.time() - st['ok_ts']) / 60:.0f} мин назад" if st.get("ok_ts") else "ещё не отправлял"
-            lines.append(f"☁️ <b>Через облако</b> (работает везде, без настроек сети):\n{cl}\n"
-                         f"Данные бота отправлены: {ago}." + (f"\n⚠️ Ошибка отправки: {escape(st['err'])}" if st.get("err") else "")
-                         + "\nСсылка с ключом: не пересылай её никому.\n")
-            if st.get("ok_ts") and not st.get("err"):
-                return "\n".join(lines), kb([self.BACK])
-        http, url, err = Http(), None, ""
-        try:
-            url = await phone.start(http, port)
-        except Exception as e:
-            err = ": " + str(e)[:120]
-        finally:
-            await http.close()
         local_ok, local_why = await phone.check(f"http://127.0.0.1:{port}", tok, tries=1)
         if not local_ok:
-            lines.append(f"❌ Панель не отвечает даже на этом компьютере ({local_why}). Перезапусти бота.\n")
+            lines.append(f"❌ Панель не отвечает даже на этом компьютере ({escape(local_why)}). Перезапусти бота.\n")
+        cl = cloud.link(self.cfg, self.conn)
+        if cl and cloud.STATE.get("ok_ts") and not cloud.STATE.get("err"):
+            lines.append(f"☁️ <b>Через облако</b>:\n{cl}\n")
+        phone.STATE["conn"] = self.conn
+        http = Http()
+        try:
+            url, how, rep = await phone.best(http, port, tok)
+        finally:
+            await http.close()
         if url:
-            ok, why = await phone.check(url, tok)
-            lines.append(f"🌍 <b>Откуда угодно</b> (мобильный интернет тоже):\n{url}/?token={tok}")
-            if ok:
-                lines.append("✅ Проверил с компьютера: открывается. Если телефон раньше пробовал старую ссылку и "
-                             "запомнил «сайт не найден», открой эту через пару минут.\n")
+            lines.append(f"🌍 <b>Откуда угодно</b> (мобильный интернет тоже), через {how}:\n{url}/?token={tok}\n"
+                         "✅ Проверил с компьютера: открывается.")
+            if how == "pinggy":
+                lines.append("Бесплатная ссылка Pinggy живёт 60 минут, потом нажми «🔁 Новый адрес». Постоянная: ngrok, ниже.")
+            elif how == "ngrok":
+                lines.append("Адрес постоянный, добавь в закладки. В первый раз ngrok покажет предупреждение: нажми Visit Site.")
             else:
-                errs = phone.tunnel_errors()
-                diag = ("Cloudflare: " + (why or "нет ответа")
-                        + (" (туннель не соединился с Cloudflare)" if not phone.registered() else "")
-                        + ((" | " + " | ".join(e[-160:] for e in errs)) if errs else ""))
-                lines.append("⚠️ С компьютера не открывается. " + escape(diag) + "\n")
-                print("📱 " + diag, flush=True)
+                lines.append("Адрес меняется при перезапуске бота, тогда нажми кнопку снова.")
         else:
-            lines.append(f"🌍 Cloudflare не запустился{escape(err)}.\n")
-        if not url or not ok:                                # запасной путь: localhost.run через ssh Windows
-            try:
-                alt = await phone.start_lhr(port)
-            except Exception as e:
-                alt, why2 = None, str(e)[:100]
-            if alt:
-                ok2, why2 = await phone.check(alt, tok, tries=6)
-                lines.append(f"🌍 <b>Запасная ссылка</b>:\n{alt}/?token={tok}\n"
-                             + ("✅ Проверил с компьютера: открывается.\n" if ok2 else f"⚠️ Тоже не открывается: {escape(why2)}\n"))
-            else:
-                why2 = " | ".join(e[-160:] for e in phone.tunnel_errors(prefix="lhr: ")) or "нет ответа"
-                lines.append(f"⚠️ Запасной туннель тоже не поднялся: {escape(why2)}\n")
-                print("📱 запасной: " + why2, flush=True)
+            lines.append("⚠️ Ни один способ не открылся снаружи.")
+        if rep:
+            lines.append("<i>" + "\n".join(escape(x) for x in rep) + "</i>")
+        lines.append("")
+        if not phone.ngrok_cfg(self.conn)[0]:
+            lines.append("🔒 <b>Постоянная ссылка (ngrok, бесплатно)</b>: зарегистрируйся на ngrok.com, открой Your Authtoken, "
+                         "скопируй и пришли мне сообщением: <code>/ngrok ТОКЕН</code>. Бот сам скачает ngrok, ссылка больше не "
+                         "будет меняться.\n")
         ips = phone.lan_ips()
-        if self.cfg["dashboard"].get("host") != "0.0.0.0":
-            lines.append("🏠 Wi-Fi выключен: в config.yaml dashboard.host должен быть 0.0.0.0.\n")
-        elif ips:
-            lines.append("🏠 <b>Дома по Wi-Fi</b> (телефон в той же сети, не мобильный интернет):\n"
-                         + "\n".join(f"http://{ip}:{port}/?token={tok}" for ip in ips)
-                         + "\nЕсли не открывается: Windows не пускает телефон. Один раз запусти в папке бота "
-                           "<b>allow_phone.bat</b> и согласись на запрос «Разрешить изменения».\n")
-        lines.append("Ссылки с секретным ключом: не пересылай их. Открой один раз, дальше телефон помнит ключ. "
-                     "Адрес 🌍 меняется при перезапуске бота, тогда нажми кнопку снова.")
-        return "\n".join(lines), kb([[("🔄 Обновить ссылку", "phone"), ("🔁 Новый адрес", "phone_new")], self.BACK])
+        if self.cfg["dashboard"].get("host") == "0.0.0.0" and ips:
+            lines.append("🏠 <b>Дома по Wi-Fi</b>: " + " или ".join(f"http://{ip}:{port}/?token={tok}" for ip in ips)
+                         + "\nНе открывается: один раз запусти в папке бота <b>allow_phone.bat</b>.\n")
+        lines.append("Ссылки с секретным ключом: не пересылай их. Телефон запоминает ключ после первого открытия.")
+        return "\n".join(lines), kb([[("🔄 Проверить", "phone"), ("🔁 Новый адрес", "phone_new")], self.BACK])
 
     def mode_screen(self):
         m = self.eff()["publishing"]["mode"]
@@ -620,6 +598,18 @@ class Admin:
                 self.leader.is_main = False
             return await self.tg.send_message(chat, f"Главный теперь {target}. Он подхватит работу в течение минуты.",
                                               parse_mode=None)
+        if text.startswith("/ngrok"):
+            parts = text.split()
+            if len(parts) < 2:
+                return await self.tg.send_message(chat, "Пришли так: /ngrok ТОКЕН (с ngrok.com). Можно добавить свой адрес: /ngrok ТОКЕН имя.ngrok-free.app",
+                                                  parse_mode=None)
+            settings.put(self.conn, "ngrok_token", parts[1])
+            settings.put(self.conn, "ngrok_domain", parts[2] if len(parts) > 2 else None)
+            from . import phone
+            phone.stop()
+            await self.tg.send_message(chat, "🔒 Токен ngrok сохранён только на этом компьютере. Запускаю постоянную ссылку…", parse_mode=None)
+            await self.show(chat, ("📱 Запускаю доступ к панели, до минуты…", kb([self.BACK])))
+            return await self.show(chat, await self.phone_screen())
         if text.startswith("/coins"):
             arg = text[6:].strip()
             if arg.lower() == "auto" or not arg:

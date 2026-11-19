@@ -97,29 +97,57 @@ def test_every_menu_button_answers_in_russian(cfg, conn):
     assert adm.eff()["portfolio"]["enabled"] is False and adm.eff()["publishing"]["mode"] == "confirm"
 
 
-def test_phone_screen_lists_links(cfg, conn, monkeypatch):
+def test_phone_screen_tries_ways_until_one_opens(cfg, conn, monkeypatch):
+    """Порт Cloudflare закрыт: бот его пропускает, Pinggy через 443 работает, ссылку даёт он; localhost.run не трогает."""
     from sigbot import phone
     from sigbot.admin import Admin
+    phone.stop()
+    started = []
 
-    async def start(http, port, wait=40):
-        return "https://abc.trycloudflare.com"
+    async def diagnose():
+        return {"cloudflare": False, "pinggy": True, "localhost.run": True, "ngrok": True}
+
+    async def start_ssh(name, port, wait=25):
+        started.append(name)
+        return "https://ab-12.a.free.pinggy.link" if name == "pinggy" else None
 
     async def check(url, tok, tries=12):
-        return ("127.0.0.1" in url), "ClientConnectorError: нет связи"
-    monkeypatch.setattr(phone, "start", start)
+        return True, ""
+    monkeypatch.setattr(phone, "diagnose", diagnose)
+    monkeypatch.setattr(phone, "start_ssh", start_ssh)
     monkeypatch.setattr(phone, "check", check)
     monkeypatch.setattr(phone, "lan_ips", lambda: ["192.168.1.5"])
-
-    async def lhr(port, wait=30):
-        return "https://zz.lhr.life"
-    monkeypatch.setattr(phone, "start_lhr", lhr)
     cfg["dashboard"]["host"] = "0.0.0.0"
     adm = Admin(cfg, conn, None, 7, None, None, None, None, None, None)
     text, _ = asyncio.run(adm.phone_screen())
     tok = phone.token(conn)
-    assert f"https://abc.trycloudflare.com/?token={tok}" in text and f"http://192.168.1.5:8787/?token={tok}" in text
-    assert "allow_phone.bat" in text and "не открывается" in text and "нет связи" in text and "VPN" not in text
-    assert f"https://zz.lhr.life/?token={tok}" in text
+    assert f"https://ab-12.a.free.pinggy.link/?token={tok}" in text and "через pinggy" in text
+    assert started == ["pinggy"] and "cloudflare ⛔" in text and "/ngrok" in text
+    assert f"http://192.168.1.5:8787/?token={tok}" in text and "VPN" not in text
+    phone.stop()
+
+
+def test_ngrok_command_saves_token_and_goes_first(cfg, conn, monkeypatch):
+    from sigbot import phone, settings
+    phone.stop()
+    settings.put(conn, "ngrok_token", "tok_abc")
+    phone.STATE["conn"] = conn
+
+    async def diagnose():
+        return {"cloudflare": True, "pinggy": True, "localhost.run": True, "ngrok": True}
+
+    async def start_ngrok(http, port, token, domain=None, wait=25):
+        assert token == "tok_abc"
+        return "https://calm-fox.ngrok-free.app"
+
+    async def check(url, tok, tries=12):
+        return True, ""
+    monkeypatch.setattr(phone, "diagnose", diagnose)
+    monkeypatch.setattr(phone, "start_ngrok", start_ngrok)
+    monkeypatch.setattr(phone, "check", check)
+    url, how, _ = asyncio.run(phone.best(None, 8787, "k" * 20))
+    assert (url, how) == ("https://calm-fox.ngrok-free.app", "ngrok")
+    phone.stop()
 
 
 def test_strategies_screen_shows_btc_layers(cfg, conn):
