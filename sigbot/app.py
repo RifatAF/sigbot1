@@ -183,7 +183,9 @@ async def run(cfg, conn):
     tasks = [asyncio.create_task(_guard(fn.__name__, fn)) for fn in col.tasks()]
     tasks.append(asyncio.create_task(_guard("auto_update", lambda: auto_update(pub))))
     tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port, lst))))
-    tasks.append(asyncio.create_task(_guard("btc_layers", lambda: layers.loop(say))))   # своя параллельная работа, расчёт сразу
+    tasks.append(asyncio.create_task(_guard("btc_layers", lambda: layers.loop(say))))
+    from .cloud import Cloud
+    tasks.append(asyncio.create_task(_guard("cloud", lambda: Cloud(cfg, conn).loop(say))))   # панель на телефоне через облако   # своя параллельная работа, расчёт сразу
     if tg and owner:
         from .admin import Admin
         admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col, leader)

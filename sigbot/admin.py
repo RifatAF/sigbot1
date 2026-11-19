@@ -152,6 +152,16 @@ class Admin:
         from .http import Http
         port, tok = self.cfg["dashboard"]["port"], phone.token(self.conn)
         lines = ["📱 <b>Панель на телефоне</b>\n"]
+        from . import cloud
+        cl = cloud.link(self.cfg, self.conn)
+        if cl:
+            st = cloud.STATE
+            ago = f"{(time.time() - st['ok_ts']) / 60:.0f} мин назад" if st.get("ok_ts") else "ещё не отправлял"
+            lines.append(f"☁️ <b>Через облако</b> (работает везде, без настроек сети):\n{cl}\n"
+                         f"Данные бота отправлены: {ago}." + (f"\n⚠️ Ошибка отправки: {escape(st['err'])}" if st.get("err") else "")
+                         + "\nСсылка с ключом: не пересылай её никому.\n")
+            if st.get("ok_ts") and not st.get("err"):
+                return "\n".join(lines), kb([self.BACK])
         http, url, err = Http(), None, ""
         try:
             url = await phone.start(http, port)
