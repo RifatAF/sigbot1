@@ -152,8 +152,10 @@ def test_paper_target_flip_and_reduce(cfg, conn):
     assert not conn.execute("SELECT 1 FROM demo_trades WHERE status='open'").fetchone()
 
 
-def test_btc_trend_signal_skipped_when_layers_on(cfg, conn):
+def test_btc_trend_parallel_by_default_and_skip_option(cfg, conn):
     from sigbot.portfolio import LivePortfolio
+    assert cfg["btc_layers"]["replace_btc_trend"] is False      # по умолчанию обе стратегии работают параллельно
+    cfg["btc_layers"]["replace_btc_trend"] = True
     idx = pd.date_range("2024-01-01", periods=60, freq="D")
     day = int(idx[-1].timestamp() * 1000)
     C = pd.DataFrame({"BTCUSDT": np.linspace(40000, 60000, 60), "ETHUSDT": np.linspace(2000, 3000, 60)},
@@ -173,3 +175,24 @@ def test_paper_target_respects_exchange_minimum(cfg, conn):
     assert 100 <= dt.net_notional("layers", px[0]) <= 150            # шаг 0.001 BTC = 50$, округление вверх
     asyncio.run(dt.layers_target(1.15, "d2"))                # добрать 15$ нельзя: меньше минимума, без сделки
     assert conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0] == 1
+
+
+def test_loop_calculates_at_start(cfg, conn, data, tmp_path, monkeypatch):
+    """При запуске бота модель считается сразу, не дожидаясь ночи, и печатает позицию."""
+    settings.put(conn, "paper.enabled", True)
+    dt = DemoTrader(cfg, conn, prices=lambda ex, s: 60000.0)
+    sv = bl.LayersService(cfg, conn, Pub(), dt)
+    sv.report_path = str(tmp_path / "bl.json")
+    monkeypatch.setattr(bl, "load", lambda refresh=False: data)
+    said = []
+
+    async def run():
+        t = asyncio.create_task(sv.loop(said.append, every_s=3600))
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if said:
+                break
+        t.cancel()
+    asyncio.run(run())
+    assert said and said[0].startswith("✅ BTC Layers:") and settings.get(conn, "btc_layers_state")
+    assert dt.has("layers")

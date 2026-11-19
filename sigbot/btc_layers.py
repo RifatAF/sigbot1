@@ -307,6 +307,10 @@ def model(cfg, conn=None, refresh: bool = False, d: dict | None = None) -> pd.Da
     return compute(d, pci_long_start=None, vol_target=float(c.get("vol_target", P["vol_target"])))
 
 
+def pos_text(x: float) -> str:
+    return "КЭШ (вне рынка)" if abs(x) < 1e-9 else f"{'ЛОНГ' if x > 0 else 'ШОРТ'} {abs(x) * 100:.0f}% депозита"
+
+
 def side_of(x: float) -> int:
     return 0 if abs(x) < 1e-9 else (1 if x > 0 else -1)
 
@@ -348,7 +352,36 @@ class LayersService:
         self.report_path = REPORT
 
     def on(self) -> bool:
-        return bool(lc(self.cfg, self.conn).get("enabled"))
+        from . import settings
+        e = settings.effective(self.cfg, self.conn)
+        return bool(e.get("btc_layers", {}).get("enabled")) and not e["publishing"].get("kill_switch")
+
+    async def loop(self, say=print, every_s: int = 600):
+        """Отдельная работа модели, параллельно с остальными сигналами: расчёт сразу при запуске бота,
+        дальше раз в сутки после закрытия дня UTC (проверка каждые 10 минут)."""
+        import asyncio
+        import logging
+        from . import settings
+        first = True
+        while True:
+            now = int(time.time() * 1000)
+            try:
+                st = await self.run_daily(now)
+                if first:
+                    st = st or settings.get(self.conn, "btc_layers_state")
+                    if not self.on():
+                        say("⏸ BTC Layers выключен: /menu → Стратегии → 🧭 BTC Layers")
+                    elif st:
+                        say(f"✅ BTC Layers: {pos_text(st['signal'])} (решение по закрытию {st['date']}), "
+                            f"панель: http://127.0.0.1:{self.cfg['dashboard']['port']}/layers")
+            except Exception as e:
+                logging.getLogger(__name__).exception("btc layers: %s", e)
+                if first:
+                    say(f"⚠️ BTC Layers: расчёт не удался ({e}), повтор через 10 минут")
+                await asyncio.sleep(every_s)
+                continue
+            first = False
+            await asyncio.sleep(every_s)
 
     async def run_daily(self, now_ms: int, force: bool = False, d: dict | None = None) -> dict | None:
         import asyncio
