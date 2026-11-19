@@ -72,7 +72,7 @@ body.shot .why{display:none}body.shot main{grid-template-columns:1fr;padding:8px
 </style></head><body>
 <header><b>sigbot</b>
 <span class="seg"><button data-src="live">Живые</button><button data-src="backtest">История (бэктест)</button></span>
-<span class="mut" id="sub"></span><span style="flex:1"></span><a href="overview" id="ovl">сводный отчёт →</a></header>
+<span class="mut" id="sub"></span><span style="flex:1"></span><a href="layers">🧭 BTC Layers →</a><a href="overview" id="ovl">сводный отчёт →</a></header>
 <div id="status"></div>
 <div class="how" id="how">
 <div data-k="trend"><b>🧭 Тренд</b> · основная прибыль, около 1 сигнала в день. Вход на дневном закрытии, стоп и две цели: на TP1 и TP2 закрываем по четверти, половину держим, пока жив тренд.</div>
@@ -833,6 +833,23 @@ def make_app(cfg, conn) -> web.Application:
         return web.json_response({"enabled": dt.on(), "leverage": pc.get("leverage", 5), "start": pc.get("start_usd", 100),
                                   "accounts": accs, "trades": trades})
 
+    async def layers_page(_):
+        return web.Response(text=(STATIC / "layers.html").read_text(encoding="utf-8"), content_type="text/html")
+
+    async def layers_api(_):
+        """BTC Layers: бэктест с 2018 года, текущая позиция и бумажный счёт модели."""
+        from .btc_layers import REPORT
+        from .demo import DemoTrader
+        f = Path(REPORT)
+        out = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        dt = DemoTrader(cfg, conn)
+        if dt.has("layers"):
+            a = dt.account("layers")
+            c = conn.execute("SELECT close FROM candles WHERE symbol='BTCUSDT' AND market='futures' ORDER BY ts DESC LIMIT 1").fetchone()
+            out["paper"] = {"start": a["start_usd"], "equity": round(dt.equity("layers"), 2), "fees": round(a["fees"], 2),
+                            "funding": round(a["funding"], 2), "position": round(dt.net_notional("layers", c[0] if c else out.get("now", {}).get("btc", 0)), 2)}
+        return web.json_response(out)
+
     async def status(_):
         from . import autoprep
         return web.json_response(autoprep.STATUS)
@@ -851,6 +868,8 @@ def make_app(cfg, conn) -> web.Application:
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/paper", paper_api)
+    app.router.add_get("/layers", layers_page)
+    app.router.add_get("/api/layers", layers_api)
     app.router.add_get("/api/feed", feed_api)
     app.router.add_get("/overview", overview_page)
     app.router.add_get("/api/overview", overview_api)

@@ -219,14 +219,25 @@ class Admin:
                 f"Сигналом становится позиция от {thr * 100:.0f}% депозита: ниже порог, больше сигналов, но они мельче.\n\n"
                 f"🆕 <b>Шорт листингов</b> {st(e['listings'].get('enabled'))}: шорт новых монет со слабым первым днём, держим до 60 дней.\n"
                 f"   Bybit {st(e['listings'].get('bybit'))}: те же правила для монет, которых нет на Binance. {self.bybit_stats()}\n\n"
-                f"⚡ <b>Капитуляции</b> {st(e['scanner'].get('enabled', True))}: редкие часовые сигналы после сильного слива, со стопом и целями.")
+                f"⚡ <b>Капитуляции</b> {st(e['scanner'].get('enabled', True))}: редкие часовые сигналы после сильного слива, со стопом и целями.\n\n"
+                f"🧭 <b>BTC Layers</b> {st(e.get('btc_layers', {}).get('enabled'))}: дневная позиция по BTC (макро + тренд), "
+                f"пост только при смене, свой бумажный счёт 100$. {self.layers_now()}")
         rows = [[("🧭 Тренд: " + ("выключить" if e["portfolio"].get("enabled") else "включить"), "tg:portfolio.enabled")],
                 [("Порог −", "thr:-0.02"), (f"порог {thr * 100:.0f}% депо", "noop"), ("Порог +", "thr:0.02")],
                 [("🆕 Листинги: " + ("выключить" if e["listings"].get("enabled") else "включить"), "tg:listings.enabled")],
                 [("🆕 Листинги Bybit: " + ("выключить" if e["listings"].get("bybit") else "включить"), "tg:listings.bybit")],
                 [("⚡ Капитуляции: " + ("выключить" if e["scanner"].get("enabled", True) else "включить"), "tg:scanner.enabled")],
+                [("🧭 BTC Layers: " + ("выключить" if e.get("btc_layers", {}).get("enabled") else "включить"), "tg:btc_layers.enabled")],
                 self.BACK]
         return text, kb(rows)
+
+    def layers_now(self) -> str:
+        s = settings.get(self.conn, "btc_layers_state")
+        if not s:
+            return "Расчёта ещё не было."
+        x = s["signal"]
+        pos = "кэш" if abs(x) < 1e-9 else f"{'лонг' if x > 0 else 'шорт'} {abs(x) * 100:.0f}% депозита"
+        return f"Сейчас: {pos} (по закрытию {s['date']})."
 
     @staticmethod
     def bybit_stats() -> str:

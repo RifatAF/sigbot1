@@ -120,3 +120,14 @@ def test_phone_screen_lists_links(cfg, conn, monkeypatch):
     assert f"https://abc.trycloudflare.com/?token={tok}" in text and f"http://192.168.1.5:8787/?token={tok}" in text
     assert "allow_phone.bat" in text and "не открывается" in text and "нет связи" in text and "VPN" not in text
     assert f"https://zz.lhr.life/?token={tok}" in text
+
+
+def test_strategies_screen_shows_btc_layers(cfg, conn):
+    from sigbot import settings
+    from sigbot.admin import Admin
+    from sigbot.bloggers import Bloggers
+    adm = Admin(cfg, conn, None, 7, None, None, None, Bloggers(cfg, conn), None, None)
+    text, _ = adm.strat_screen()
+    assert "BTC Layers" in text and "ещё не было" in text
+    settings.put(conn, "btc_layers_state", {"signal": -0.9, "date": "2026-11-16"})
+    assert "шорт 90% депозита" in adm.strat_screen()[0]

@@ -1,0 +1,59 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BTC Layers</title><script src="static/lightweight-charts.js"></script>
+<style>
+:root{--bg:#0d1017;--card:#151a24;--line:#232b3a;--txt:#e8ebf1;--mut:#8a93a6;--g:#3ddc97;--r:#ff6b6b;--b:#5b8cff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:14px -apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+a{color:#7aa7ff}.mut{color:var(--mut)}.pos{color:var(--g)}.neg{color:var(--r)}
+main{max-width:1100px;margin:0 auto;padding:12px 16px;display:grid;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.big{font-size:26px;font-weight:700}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.cards div{background:#11161f;border-radius:8px;padding:8px 12px}.cards span{color:var(--mut);font-size:11px;text-transform:uppercase}
+.cards b{display:block;font-size:17px;margin-top:3px;font-variant-numeric:tabular-nums}
+#eq{height:360px}#pos{height:120px}table{border-collapse:collapse;width:100%}td{padding:4px 6px;border-bottom:1px solid var(--line)}
+td:last-child{text-align:right;font-variant-numeric:tabular-nums}.leg span{margin-right:14px}
+</style></head><body>
+<header><b>🧭 BTC Layers</b><span class="mut">дневная модель позиции по биткоину</span><span style="flex:1"></span><a href="./">← к сигналам</a></header>
+<main>
+<div class="card"><div class="mut" id="date"></div><div class="big" id="posnow">…</div><div class="mut" id="why"></div></div>
+<div class="card"><div class="cards" id="kpi"></div></div>
+<div class="card"><b>Бэктест: 100$ с 21.05.2018</b> <span class="mut">(логарифмическая шкала)</span>
+<div class="leg mut"><span style="color:#5b8cff">━ модель</span><span>━ купить и держать BTC</span></div>
+<div id="eq"></div><div class="mut" style="margin-top:6px">Позиция по дням: выше нуля лонг, ниже шорт, 1 = весь депозит</div><div id="pos"></div></div>
+<div class="card"><b>Слои сейчас</b><table id="parts"></table></div>
+<div class="card"><b>🧪 Бумажный счёт «BTC Layers»</b><div id="paper" class="mut">появится после первого расчёта бота</div></div>
+<div class="card mut">Как работает: макро (газ США, ожидания ФРС, ликвидность ФРС, кривая доходности, газ Европа к США, премия Coinbase) решает сторону;
+тренд (каналы Дончиана и SMA 20/50) решает долю; размер подгоняется под волатильность 40% годовых. Решение раз в сутки после закрытия дня UTC.
+Стопов и целей нет: в исследовании они ухудшали результат, позиция меняется только моделью.</div>
+</main>
+<script>
+const NM={gas:'Газ США',fed:'Ожидания ФРС',liq:'Ликвидность ФРС',curve:'Кривая доходности',ttf:'Газ Европа к США',prem:'Премия Coinbase'};
+const pct=x=>(x>0?'+':'')+(x*100).toFixed(0)+'%';
+const usd=x=>'$'+Math.round(x).toLocaleString('en');
+const posTxt=x=>Math.abs(x)<1e-9?'КЭШ (вне рынка)':(x>0?'ЛОНГ ':'ШОРТ ')+Math.round(Math.abs(x)*100)+'% депозита';
+function chart(el,h,log){return LightweightCharts.createChart(el,{height:h,layout:{background:{color:'#151a24'},textColor:'#8a93a6'},
+  grid:{vertLines:{color:'#1b2230'},horzLines:{color:'#1b2230'}},rightPriceScale:{mode:log?1:0,borderColor:'#232b3a'},
+  timeScale:{borderColor:'#232b3a',minBarSpacing:0.05},autoSize:true});}
+(async()=>{
+  const r=await (await fetch('api/layers')).json();
+  if(!r.days){document.getElementById('posnow').textContent='Расчёта ещё нет: бот посчитает после 00:05 UTC, или запусти python -m sigbot btc_layers --bt';return;}
+  const n=r.now;
+  document.getElementById('date').textContent='Решение по закрытию '+n.date;
+  const p=document.getElementById('posnow');p.textContent=posTxt(n.signal);p.className='big '+(n.signal>0?'pos':n.signal<0?'neg':'');
+  document.getElementById('why').textContent=`макро ${n.macro.toFixed(2)} → режим ${n.regime>0?'бычий':'медвежий'} · тренд ${n.trend.toFixed(2)} · волатильность ${(n.vol*100).toFixed(0)}% · BTC ${usd(n.btc)}`;
+  const k=[['Итог',usd(r.final)],['В год',pct(r.cagr)],['Просадка',pct(r.max_dd)],['Шарп',r.sharpe.toFixed(2)],['Купить и держать',usd(r.days[r.days.length-1].bh)]];
+  document.getElementById('kpi').innerHTML=k.map(([a,b])=>`<div><span>${a}</span><b>${b}</b></div>`).join('');
+  const c=chart(document.getElementById('eq'),360,true);
+  c.addLineSeries({color:'#5b8cff',lineWidth:2,priceFormat:{type:'price',precision:0,minMove:1}}).setData(r.days.map(d=>({time:d.t,value:d.eq})));
+  c.addLineSeries({color:'#8a93a6',lineWidth:1,priceFormat:{type:'price',precision:0,minMove:1}}).setData(r.days.map(d=>({time:d.t,value:d.bh})));
+  c.timeScale().fitContent();
+  const c2=chart(document.getElementById('pos'),120,false);
+  c2.addHistogramSeries({priceFormat:{type:'price',precision:2,minMove:0.01}}).setData(r.days.map(d=>({time:d.t,value:d.pos,color:d.pos>0?'#3ddc97':d.pos<0?'#ff6b6b':'#555'})));
+  c2.timeScale().fitContent();
+  const sg=v=>v==null?'н/д':(v>0?'+':'')+v.toFixed(2);
+  document.getElementById('parts').innerHTML=Object.entries(n.parts).map(([a,v])=>`<tr><td>${NM[a]||a}</td><td class="${v>0?'pos':v<0?'neg':''}">${sg(v)}</td></tr>`).join('')
+    +`<tr><td><b>Макро-индекс</b></td><td><b>${sg(n.macro)}</b></td></tr><tr><td>Тренд</td><td>${sg(n.trend)}</td></tr>`;
+  const a=r.paper;
+  if(a) document.getElementById('paper').innerHTML=`Капитал <b class="${a.equity>=a.start?'pos':'neg'}">$${a.equity.toFixed(2)}</b> из $${a.start.toFixed(0)} · позиция ${Math.abs(a.position)<0.01?'нет':(a.position>0?'лонг $':'шорт $')+Math.abs(a.position).toFixed(2)} ·комиссии $${a.fees.toFixed(2)} · фандинг $${(-a.funding).toFixed(2)}`;
+})();
+</script></body></html>

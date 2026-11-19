@@ -184,6 +184,17 @@ def cmd_health(cfg, conn, args):
     print(f"gaps 72h: {day[0]}")
 
 
+def cmd_btc_layers(cfg, conn, args):
+    from . import btc_layers as bl
+    df = bl.model(cfg, conn, refresh=args.refresh)
+    print(bl.describe(df.iloc[-1]))
+    print(f"Позиция на сегодня: {bl.state_of(df.iloc[-1])['signal']:+.2f} депозита (плюс лонг, минус шорт)")
+    if args.bt:
+        r = bl.report(df)
+        print(f"$100 с {r['start']} → ${r['final']:,.0f}, {r['cagr']:+.0%} годовых, просадка {r['max_dd']:.0%}, "
+              f"Шарп {r['sharpe']:.2f} (график на панели: /layers)")
+
+
 def cmd_run(cfg, conn, args):
     import os
     if not os.environ.get("SIGBOT_CHILD") and os.environ.get("AUTO_UPDATE", "1") != "0":
@@ -221,6 +232,10 @@ def main(argv=None):
     e.add_argument("--out", default="export")
     sub.add_parser("health", help="состояние сборщика")
     sub.add_parser("run", help="запустить бота")
+    bl = sub.add_parser("btc_layers", help="BTC Layers: позиция на сегодня и бэктест")
+    bl.add_argument("--now", action="store_true", help="позиция на сегодня (по умолчанию)")
+    bl.add_argument("--bt", action="store_true", help="плюс бэктест $100 с 21.05.2018 в reports/btc_layers.json")
+    bl.add_argument("--refresh", action="store_true", help="скачать данные заново, не из кэша")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -244,6 +259,8 @@ def main(argv=None):
         cmd_export(cfg, conn, args)
     elif args.cmd == "health":
         cmd_health(cfg, conn, args)
+    elif args.cmd == "btc_layers":
+        cmd_btc_layers(cfg, conn, args)
     elif args.cmd == "run":
         cmd_run(cfg, conn, args)
 

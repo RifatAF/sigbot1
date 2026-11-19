@@ -310,8 +310,11 @@ class LivePortfolio:
             feed.finish(st, (day + DAY) // 1000, px, "trend")
             sent = await self._closed(r, st, day + DAY, mode) or sent
         open_syms = {r[0] for r in self.conn.execute("SELECT symbol FROM trend_signals WHERE status='open'")}
+        from . import settings
+        eff = settings.effective(self.cfg, self.conn).get("btc_layers", {})
+        skip = {"BTCUSDT"} if eff.get("enabled") and eff.get("replace_btc_trend") else set()   # BTC ведёт модель BTC Layers
         for sym, w in sorted(new.items(), key=lambda x: -abs(x[1])):
-            if abs(w) < thr or sym in open_syms:
+            if abs(w) < thr or sym in open_syms or sym in skip:
                 continue
             prev_w = self.conn.execute("SELECT weight FROM portfolio_weights WHERE symbol=? AND day=?",
                                        (sym, day - DAY)).fetchone()

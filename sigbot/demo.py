@@ -14,7 +14,7 @@ from . import settings
 
 log = logging.getLogger(__name__)
 HOUR = 3_600_000
-FEES = {"binance": 0.05, "bybit": 0.055}          # тейкер, % от объёма
+FEES = {"binance": 0.05, "bybit": 0.055, "layers": 0.05}   # layers: отдельный счёт модели BTC Layers, цены и правила Binance          # тейкер, % от объёма
 MMR = 0.005                                       # поддерживающая маржа: ликвидация, когда убыток съел маржу почти целиком
 
 
@@ -66,9 +66,11 @@ class DemoTrader:
         """Цена для ордера. fast (проверка ликвидаций раз в минуту): свежая свеча из базы для обеих бирж."""
         if self.prices:
             return self.prices(ex, sym)
+        if getattr(self, "prices_fallback", None) and ex == "layers":
+            return self.prices_fallback
         r = self.conn.execute("SELECT close, ts FROM candles WHERE symbol=? AND market='futures' AND tf IN ('1m','1h') "
                               "ORDER BY ts DESC LIMIT 1", (sym,)).fetchone()
-        if r and time.time() * 1000 - r[1] < 2 * HOUR and (ex == "binance" or fast):
+        if r and time.time() * 1000 - r[1] < 2 * HOUR and (ex in ("binance", "layers") or fast):
             return float(r[0])
         from .http import Http
         from .sources import Binance, Bybit
@@ -89,6 +91,7 @@ class DemoTrader:
     async def rules(self, ex: str, sym: str) -> dict:
         """Правила биржи по монете: минимальная сумма позиции, минимальное количество и шаг количества.
         Берутся с открытого API биржи раз в сутки. Нет ответа: минимум 5$ и шаг без ограничений."""
+        ex = "binance" if ex == "layers" else ex
         cache = settings.get(self.conn, f"paper_rules_{ex}") or {}
         if not self.prices and time.time() - cache.get("_ts", 0) > 86400:
             try:
@@ -111,12 +114,12 @@ class DemoTrader:
         if not self.on() or notional_pct <= 0:
             return
         lev = max(1, int(self.pc().get("leverage", 5)))
-        for ex in self.exchanges():
+        for ex in self.exchanges() + (["layers"] if exchange == "layers" else []):
             if exchange and ex != exchange:
                 continue
             if self.conn.execute("SELECT 1 FROM demo_trades WHERE exchange=? AND kind=? AND ref=?", (ex, kind, ref)).fetchone():
                 continue
-            name = f"Бумажный {ex.capitalize()}"
+            name = f"Бумажный {acc_name(ex)}"
             px = await self.price(ex, symbol)
             if not px:
                 await self._say(f"🧪 {name}: {symbol.replace('USDT', '')} не открыт, нет цены")
@@ -199,7 +202,7 @@ class DemoTrader:
         rule = await self.rules(ex, r["symbol"])
         qty = r["open_qty"] if part is None else min(r["open_qty"], _step(r["qty"] * part, rule["step"]))
         if part is not None and qty < max(rule["min_qty"], rule["step"], 1e-12):
-            await self._say(f"🧪 Бумажный {ex.capitalize()}: {why}, но {symbol_name(r)}: часть меньше минимального количества "
+            await self._say(f"🧪 Бумажный {acc_name(ex)}: {why}, но {symbol_name(r)}: часть меньше минимального количества "
                             "биржи, держу всю позицию до следующего выхода")
             return
         if r["open_qty"] - qty < max(rule["step"], r["qty"] * 1e-6):
@@ -216,9 +219,63 @@ class DemoTrader:
                           "exit=? WHERE id=?", (0 if closed else left, gross - fee, fee, "closed" if closed else "open",
                                                 int(time.time() * 1000) if closed else None, fill, r["id"]))
         tot = r["realized"] + gross - fee                           # с комиссиями и фандингом
-        await self._say(f"🧪 Бумажный {ex.capitalize()}: {why}, {symbol_name(r)} закрыто {qty / r['qty'] * 100:.0f}% по {fill:g}, "
+        await self._say(f"🧪 Бумажный {acc_name(ex)}: {why}, {symbol_name(r)} закрыто {qty / r['qty'] * 100:.0f}% по {fill:g}, "
                         f"{gross - fee:+.2f}$" + (f". Сделка закрыта, итог {tot:+.2f}$" if closed else "")
                         + f". Баланс {self.account(ex)['balance']:.2f}$")
+
+    # ---------- BTC Layers: целевая позиция раз в сутки
+    def has(self, ex: str) -> bool:
+        return self.conn.execute("SELECT 1 FROM paper_accounts WHERE exchange=?", (ex,)).fetchone() is not None
+
+    def net_notional(self, ex: str, px: float) -> float:
+        """Текущая позиция счёта в $, со знаком (лонг +, шорт −)."""
+        return sum(r["open_qty"] * px * (1 if r["side"] == "long" else -1) for r in
+                   self.conn.execute("SELECT * FROM demo_trades WHERE exchange=? AND status='open'", (ex,)))
+
+    async def layers_target(self, pos: float, day: str, band: float = 0.10, symbol: str = "BTCUSDT",
+                            px_hint: float | None = None):
+        """Привести счёт «BTC Layers» к позиции pos × капитал (pos со знаком: −2.25..2.25).
+        Ребаланс, только если разница больше band капитала. Без стопов и целей: выход только по модели."""
+        if not self.on():
+            return
+        ex = "layers"
+        self.account(ex)
+        px = await self.price(ex, symbol)
+        if not px and px_hint:                         # биржи не ответили: последнее дневное закрытие модели
+            px = px_hint
+            self.prices_fallback = px_hint
+        if not px:
+            await self._say("🧪 BTC Layers: нет цены BTC, ребаланс перенесён на следующий расчёт")
+            return
+        try:
+            await self._rebalance(ex, px, pos, day, band, symbol)
+        finally:
+            self.prices_fallback = None
+
+    async def _rebalance(self, ex: str, px: float, pos: float, day: str, band: float, symbol: str):
+        eq = self.equity(ex)
+        cur, tgt = self.net_notional(ex, px), pos * eq
+        if abs(tgt - cur) <= band * eq:
+            return
+        rows = self.conn.execute("SELECT * FROM demo_trades WHERE exchange=? AND status='open' ORDER BY id DESC", (ex,)).fetchall()
+        flip = cur and (tgt == 0 or (tgt > 0) != (cur > 0))
+        if flip:                                       # смена стороны или кэш: закрыть всё
+            for r in rows:
+                await self._close(r, px, None, "BTC Layers: " + ("в кэш" if not tgt else "смена стороны"))
+            cur = 0.0
+        rule = await self.rules(ex, symbol)
+        need = max(rule["min_notional"], rule["min_qty"] * px)
+        if cur and abs(abs(tgt) - abs(cur)) < need:    # у BTC минимум Binance около 100$: мелкую разницу не трогаем
+            await self._say(f"🧪 BTC Layers: позиция {pos:+.2f}, разница {abs(abs(tgt) - abs(cur)):.2f}$ меньше минимума "
+                            f"биржи {need:.2f}$, держу как есть")
+            return
+        if abs(tgt) > abs(cur):                        # добрать разницу новой сделкой
+            await self.open("layers", f"{day}:{len(rows)}", symbol, "long" if tgt > 0 else "short",
+                            (abs(tgt) - abs(cur)) / max(self.equity(ex), 1e-9) * 100, exchange=ex)
+        elif abs(tgt) < abs(cur):                      # уменьшить: срезать долю с каждой сделки
+            k = 1 - abs(tgt) / abs(cur)
+            for r in rows:
+                await self._close(r, px, k * r["open_qty"] / r["qty"], f"BTC Layers: позиция {pos:+.2f}")
 
     # ---------- раз в минуту: фандинг и ликвидации
     async def tick(self, now_ms: int | None = None):
@@ -264,7 +321,7 @@ class DemoTrader:
 
     async def report(self) -> str:
         lines = []
-        for ex in self.exchanges():
+        for ex in self.exchanges() + (["layers"] if self.has("layers") else []):
             a = self.account(ex)
             eq = self.equity(ex)
             ch = (eq / a["start_usd"] - 1) * 100
@@ -272,7 +329,7 @@ class DemoTrader:
                                      (ex,)).fetchone()
             op = self.conn.execute("SELECT * FROM demo_trades WHERE exchange=? AND status='open' ORDER BY opened_ts DESC",
                                    (ex,)).fetchall()
-            lines.append(f"<b>{ex.capitalize()}</b>: {eq:.2f}$ ({ch:+.1f}% от {a['start_usd']:.0f}$), свободно {self.free(ex):.2f}$")
+            lines.append(f"<b>{acc_name(ex)}</b>: {eq:.2f}$ ({ch:+.1f}% от {a['start_usd']:.0f}$), свободно {self.free(ex):.2f}$")
             lines.append(f"  сделок закрыто {done[0]}, в плюс {done[1] or 0}; комиссии {a['fees']:.2f}$, фандинг {-a['funding']:+.2f}$")
             for r in op[:10]:
                 c = self.conn.execute("SELECT close FROM candles WHERE symbol=? AND market='futures' ORDER BY ts DESC LIMIT 1",
@@ -324,6 +381,10 @@ async def _fetch_rules(ex: str) -> dict:
     if not out:
         raise RuntimeError("пустой ответ")
     return out
+
+
+def acc_name(ex: str) -> str:
+    return "BTC Layers" if ex == "layers" else ex.capitalize()
 
 
 def symbol_name(r) -> str:

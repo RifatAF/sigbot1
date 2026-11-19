@@ -33,7 +33,7 @@ async def _guard(name, coro_fn):
             await asyncio.sleep(10)
 
 
-async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
+async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None, layers=None):
     """Скан в :02 каждого часа, ведение сделок каждую минуту, ежедневная заметка, недельные посты."""
     last_scan_hour = settings.get(conn, "sched_last_scan_hour", 0)
     if port:
@@ -81,6 +81,12 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None):
                     await lst.run_daily(now)
                 except Exception as e:
                     log.exception("listings: %s", e)
+            if layers and eff.get("btc_layers", {}).get("enabled") and not eff["publishing"].get("kill_switch") \
+                    and (time.gmtime(now / 1000).tm_hour - eff["btc_layers"].get("post_hour_utc", 0)) % 24 < 3:
+                try:
+                    await layers.run_daily(now)              # BTC Layers: позиция на сутки, пост при смене, ребаланс счёта
+                except Exception as e:
+                    log.exception("btc layers: %s", e)
             if time.gmtime(now / 1000).tm_hour == 3 and settings.get(conn, "sched_feed") != now // DAY:
                 settings.put(conn, "sched_feed", now // DAY)           # бэктест ленты обновляется раз в сутки
                 try:
@@ -166,6 +172,8 @@ async def run(cfg, conn):
     from .demo import DemoTrader
     dt = DemoTrader(cfg, conn, pub.notify_owner)
     live.demo = port.demo = lst.demo = dt
+    from .btc_layers import LayersService
+    layers = LayersService(cfg, conn, pub, dt)
 
     say = lambda m: print(m, flush=True)
     say("\n=== sigbot запускается ===")
@@ -180,7 +188,7 @@ async def run(cfg, conn):
     say(f"✅ Telegram: {'основной экземпляр' if leader and leader.is_main else 'запасной, в канал не пишет' if leader else 'нет токена, посты не уходят'}")
     tasks = [asyncio.create_task(_guard(fn.__name__, fn)) for fn in col.tasks()]
     tasks.append(asyncio.create_task(_guard("auto_update", lambda: auto_update(pub))))
-    tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port, lst))))
+    tasks.append(asyncio.create_task(_guard("scheduler", lambda: scheduler(cfg, conn, live, pub, port, lst, layers))))
     if tg and owner:
         from .admin import Admin
         admin = Admin(cfg, conn, tg, int(owner), pub, live, llm, bl, col, leader)

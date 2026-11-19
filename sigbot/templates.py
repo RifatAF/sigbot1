@@ -308,6 +308,57 @@ def trend_signal(symbol: str, side: str, entry: float, size_pct: float, exit_lev
     return "\n".join(lines), f.numbers
 
 
+LAYER_NAMES = {"ru": {"gas": "газ США", "fed": "ожидания ФРС", "liq": "ликвидность ФРС", "curve": "кривая доходности",
+                       "ttf": "газ Европа к США", "prem": "премия Coinbase"},
+               "en": {"gas": "US gas", "fed": "Fed expectations", "liq": "Fed liquidity", "curve": "yield curve",
+                      "ttf": "EU vs US gas", "prem": "Coinbase premium"}}
+
+
+def _layers_pos(f: Fmt, x: float, ru: bool, bold: bool = True) -> str:
+    if abs(x) < 1e-9:
+        return "КЭШ (вне рынка)" if ru else "CASH (flat)"
+    side = ("ЛОНГ" if x > 0 else "ШОРТ") if ru else ("LONG" if x > 0 else "SHORT")
+    v = f.n(abs(x) * 100, 0)
+    return (f"<b>{side} {v}%</b>" if bold else f"{side} {v}%") + (" депозита" if ru else " of capital")
+
+
+def btc_layers(st: dict, prev: dict | None, mode: str, lang: str = "ru") -> tuple[str, list[float]]:
+    """BTC Layers: позиция по BTC на сутки. Пост только при смене направления или размера."""
+    f, ru = Fmt(), lang == "ru"
+    x = st["signal"]
+    icon = "🟢" if x > 0 else "🔴" if x < 0 else "⚪️"
+    lines = ["🧭 <b>BTC Layers</b>  #BTC", "Дневная модель по биткоину: макро решает сторону, тренд долю" if ru else
+             "Daily BTC model: macro picks the side, trend the size", ""]
+    lines.append(f"{icon} {'Позиция' if ru else 'Position'}: {_layers_pos(f, x, ru)}")
+    if prev is not None:
+        lines.append(f"{'Было' if ru else 'Was'}: {_layers_pos(f, prev['signal'], ru, bold=False)}")
+    if abs(x) > 1e-9:
+        lines.append((f"Пример: на 100$ депозита {'лонг' if x > 0 else 'шорт'} на {f.n(abs(x) * 100, 0)}$ по цене около {f.p(st['btc'])}"
+                      if ru else f"Example: on a 100$ account, {'long' if x > 0 else 'short'} {f.n(abs(x) * 100, 0)}$ near {f.p(st['btc'])}"))
+    lines.append("Без стопа и целей: позиция меняется только по следующему посту модели" if ru else
+                 "No stop or targets: the position changes only with the next model post")
+    reg = st["regime"] > 0
+    lines += ["", (f"Макро {f.n(st['macro'], 2, sign=True)} → режим {'бычий' if reg else 'медвежий'}" if ru else
+                   f"Macro {f.n(st['macro'], 2, sign=True)} → {'bull' if reg else 'bear'} regime")]
+    parts = [f"{LAYER_NAMES[lang][k]} {f.n(v, 2, sign=True)}" for k, v in st["parts"].items() if v is not None]
+    for i in range(0, len(parts), 3):
+        lines.append("  " + " · ".join(parts[i:i + 3]))
+    tr = st["trend"]
+    lines.append((f"Тренд {f.n(tr, 2, sign=True)} ({'вверх' if tr > 0 else 'вниз' if tr < 0 else 'ровно'}) · "
+                  f"волатильность {f.n(st['vol'] * 100, 0)}%" if ru else
+                  f"Trend {f.n(tr, 2, sign=True)} · volatility {f.n(st['vol'] * 100, 0)}%"))
+    bt = st.get("bt")
+    if bt:
+        lines.append((f"На истории с {bt['start'][:4]}: 100$ → {f.n(bt['final'], 0)}$, {f.n(bt['cagr'] * 100, 0, sign=True)}% в год, "
+                      f"просадка до {f.n(bt['max_dd'] * 100, 0)}%" if ru else
+                      f"Backtest since {bt['start'][:4]}: 100$ → {f.n(bt['final'], 0)}$, {f.n(bt['cagr'] * 100, 0, sign=True)}%/yr, "
+                      f"max drawdown {f.n(bt['max_dd'] * 100, 0)}%"))
+        f.numbers += [float(bt["start"][:4]), 100.0]
+    f.numbers.append(100.0)
+    lines.append(_foot(mode, lang))
+    return "\n".join(lines), f.numbers
+
+
 EV = {"ru": {"tp1": "✅ {c} {s}: TP1 {p}", "tp2": "🎯 {c} {s}: TP2 {p}", "sl": "❌ {c} {s}: стоп {p}"},
       "en": {"tp1": "✅ {c} {s}: TP1 {p}", "tp2": "🎯 {c} {s}: TP2 {p}", "sl": "❌ {c} {s}: stopped at {p}"}}
 
