@@ -43,62 +43,20 @@ def _div_human(labels: list[str]) -> str:
     return ", ".join(out)
 
 
-def signal_ru(sig: dict) -> tuple[str, list[float]]:
+def signal_ru(sig: dict, lang: str = "ru") -> tuple[str, list[float]]:
     """Капитуляция: вход, две цели, стоп. Без индикаторов."""
-    f, side, e, L = Fmt(), sig["side"], sig["entry"], LBL["ru"]
-    lines = [_hdr(sig["symbol"], side, "ru"), "⚡ Отскок после слива", "",
+    f, side, e, L, ru = Fmt(), sig["side"], sig["entry"], LBL[lang], lang == "ru"
+    lines = [_hdr(sig["symbol"], side, lang), "⚡ " + ("Отскок после слива" if ru else "Rebound after a flush"), "",
              f"▶️ {L['entry']}: <b>{f.p(e)}</b>",
              f"🎯 {L['tp']} 1: {f.p(sig['tp1'])} ({_pct(f, side, e, sig['tp1'])}) · {L['close']} {f.i(50)}%",
              f"🎯 {L['tp']} 2: {f.p(sig['tp2'])} ({_pct(f, side, e, sig['tp2'])})",
              f"🛑 {L['stop']}: {f.p(sig['stop'])} ({_pct(f, side, e, sig['stop'])})",
-             "После цели 1 стоп в безубыток"]
+             "После цели 1 стоп в безубыток" if ru else "After target 1 the stop moves to breakeven"]
     return _lines_end(lines, sig.get("mode", ""), f), f.numbers
 
 
 def signal(sig: dict, comment: str = "", zones: list[dict] | None = None, lang: str = "en") -> tuple[str, list[float]]:
-    if lang == "ru":
-        return signal_ru(sig)
-    f = Fmt()
-    side = sig["side"].upper()
-    arrow = "🟢" if sig["side"] == "long" else "🔴"
-    feats = sig.get("features", {})
-    lines = [
-        f"{arrow} <b>{_coin(sig['symbol'])} {side}</b>  #{_coin(sig['symbol'])}",
-        "",
-        f"Entry: <b>{f.p(sig['entry'])}</b>",
-        f"Stop: {f.p(sig['stop'])}",
-        *([f"Reference target: {f.p(sig['tp2'])} (exit by trailing stop)"] if feats.get("setup") == "trend" else
-          [f"TP1: {f.p(sig['tp1'])} (close {f.i(50)}%)", f"TP2: {f.p(sig['tp2'])}"]),
-        "",
-        f"Risk: {f.n(sig['risk_pct'])}% of deposit · effective leverage x{f.n(sig['leverage'], 1)}",
-        f"Strength: {f.n(sig['strength'])}",
-    ]
-    if feats.get("setup") == "capitulation" and feats.get("drop_sigma") is not None:
-        lines.append(f"Setup: rebound after a liquidation flush, 24h drop {f.n(feats['drop_sigma'], 1)} sigma, "
-                     "open interest flushed")
-    if feats.get("setup") == "trend":
-        ma = feats.get("ma", [20, 50])
-        lines.append(f"Setup: daily trend, MA{f.i(ma[0])} crossed {'above' if sig['side'] == 'long' else 'below'} "
-                     f"MA{f.i(ma[1])}, holding days to weeks")
-    if feats.get("divergences"):
-        lines.append(f"Divergences: {escape(_div_human(feats['divergences']), quote=False)}")
-    trend = {1: "up", -1: "down", 0: "flat"}.get(feats.get("trend_4h"), "n/a")
-    lines.append(f"4h trend: {trend}")
-    if feats.get("fear_greed") is not None:
-        lines.append(f"Fear &amp; Greed: {f.i(feats['fear_greed'])}")
-    if feats.get("tp2_from_liq_cluster"):
-        lines.append("TP2 sits at an estimated liquidation cluster.")
-    if zones:
-        z = [f"{f.p(x['low'])}-{f.p(x['high'])} ({f.i(x['sources'])} src)" for x in zones]
-        lines.append("Watch zones from tracked analysts (not used for entry): " + "; ".join(z))
-    if comment:
-        lines += ["", escape(comment, quote=False)]
-    if feats.get("setup") == "trend":
-        lines.append(f"\nExit: trailing stop {f.n(feats['trail_atr'], 1)} daily ATR from the daily close, "
-                     "TP is a reference only. Not financial advice." + _tag(sig.get("mode", "")))
-    else:
-        lines.append("\nStop moves to breakeven halfway to TP2. Not financial advice." + _tag(sig.get("mode", "")))
-    return "\n".join(lines), f.numbers
+    return signal_ru(sig, "ru" if lang == "ru" else "en")
 
 
 EVENT_TEXT = {
@@ -137,13 +95,22 @@ def update(sig: dict, event: str, price: float, r_total: float | None = None, la
                      f"Цена {f.p(price)} ({_pct(f, sd, e, price)}). Остаток держим, стоп в безубыток {f.p(e)}"]
         f.numbers += [1.0, 2.0, 50.0]
         return "\n".join(lines) + _tag(sig.get("mode", "")), f.numbers
-    f = Fmt()
-    icon = {"tp1": "✅", "tp2": "🎯", "stop": "❌", "breakeven": "🛡", "breakeven_stop": "➖", "trail_stop": "🎯",
-            "invalidation": "⚠️", "timeout": "⏱"}.get(event, "•")
-    lines = [f"{icon} <b>{_coin(sig['symbol'])} {sig['side'].upper()}</b>: {EVENT_TEXT.get(event, event)}",
-             f"Price: {f.p(price)}"]
-    if r_total is not None:
-        lines.append(f"Result: {f.n(r_total, 2, sign=True)}R")
+    f, sd, e = Fmt(), sig["side"], sig["entry"]
+    name = {"breakeven": "stop to breakeven", "tp1": "target 1 hit, closed 50%", "tp2": "target 2 hit", "stop": "stop",
+            "breakeven_stop": "stopped at breakeven", "trail_stop": "trailing stop", "invalidation": "setup invalidated",
+            "timeout": "time exit", "manual": "manual"}.get(event, event)
+    icon = {"tp1": "✅", "tp2": "🎯", "stop": "❌", "breakeven": "🛡", "breakeven_stop": "➖"}.get(event, "🏁")
+    if event in EVENT_FINAL:
+        lines = [f"{icon} <b>Exit #{_coin(sig['symbol'])} · {_side(sd, 'en')}: {f.p(price)}</b>",
+                 f"{name.capitalize()} · entry {f.p(e)} → {f.p(price)} ({_pct(f, sd, e, price)})"]
+        if pnl_pct is not None:
+            lines.append(f"Result: <b>{f.n(pnl_pct, 2, sign=True)}%</b> of capital")
+    elif event == "breakeven":
+        lines = [f"🛡 <b>#{_coin(sig['symbol'])} · {_side(sd, 'en')}: stop moved to breakeven {f.p(e)}</b>"]
+    else:
+        lines = [f"{icon} <b>#{_coin(sig['symbol'])} · {_side(sd, 'en')}: {name}</b>",
+                 f"Price {f.p(price)} ({_pct(f, sd, e, price)}). Holding the rest, stop at breakeven {f.p(e)}"]
+    f.numbers += [1.0, 2.0, 50.0]
     return "\n".join(lines) + _tag(sig.get("mode", "")), f.numbers
 
 
