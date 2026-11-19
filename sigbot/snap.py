@@ -8,8 +8,8 @@ from pathlib import Path
 import aiohttp
 
 WHAT = {"tp1": "TP1", "tp2": "TP2", "sl": "стоп", "be": "безубыток", "trend": "тренд сломался", "time": "по времени",
-        "delist": "делистинг", "invalid": "идея сломалась", "trail": "трейлинг", "manual": "вручную"}
-KIND = {"trend": "🧭 Тренд", "capitulation": "⚡ Капитуляция", "listing": "🆕 Листинг"}
+        "delist": "делистинг", "flip": "разворот модели", "cash": "модель ушла в кэш", "resize": "размер", "invalid": "идея сломалась", "trail": "трейлинг", "manual": "вручную"}
+KIND = {"trend": "🧭 Тренд", "capitulation": "⚡ Капитуляция", "listing": "🆕 Листинг", "layers": "🧱 BTC Layers"}
 
 
 async def feed(port: int, source: str = "live") -> list[dict]:
@@ -49,7 +49,14 @@ def caption(t: dict) -> str:
         lines.append(f"🛑 Стоп: {_px(t['stop'])} ({_pct(t, t['stop'])})" + (" ❌" if "sl" in hit else ""))
     if t.get("open") and t.get("exit_level"):
         lines.append(f"〰️ Слом тренда: {_px(t['exit_level'])}")
-    fin = [e for e in t.get("exits") or [] if e["what"] not in ("tp1", "tp2", "sl")]
+    if t["kind"] == "layers":
+        lines.append(f"Размер на входе: {t['size_pct']}% депозита (объём, не маржа). Без стопа и целей")
+        for e in t.get("exits") or []:
+            if e["what"] == "resize":
+                lines.append(f"↔️ Размер {e['part'] * 100:.0f}% при {_px(e['price'])} ({_pct(t, e['price'])})")
+        if t.get("open"):
+            lines.append(f"⏳ Держим {t.get('size_now')}% депозита, пока модель не сменит позицию")
+    fin = [e for e in t.get("exits") or [] if e["what"] not in ("tp1", "tp2", "sl", "resize")]
     if fin:
         lines.append(f"Выход: {WHAT.get(fin[-1]['what'], fin[-1]['what'])} {_px(fin[-1]['price'])}")
     if t.get("result_pct") is not None:
@@ -76,7 +83,7 @@ async def render_layers(port: int) -> bytes:
             await browser.close()
 
 
-async def render(port: int, source: str, symbol: str, entry_time: int) -> bytes:
+async def render(port: int, source: str, symbol: str, entry_time: int, kind: str = "") -> bytes:
     from playwright.async_api import async_playwright
     exe = os.environ.get("CHROMIUM_PATH") or "/opt/pw-browsers/chromium"
     async with async_playwright() as pw:
@@ -86,7 +93,7 @@ async def render(port: int, source: str, symbol: str, entry_time: int) -> bytes:
         browser = await pw.chromium.launch(**kw)
         try:
             page = await browser.new_page(viewport={"width": 520, "height": 900}, device_scale_factor=2)
-            await page.goto(f"http://127.0.0.1:{port}/?source={source}&shot=1&pick={symbol}:{entry_time}")
+            await page.goto(f"http://127.0.0.1:{port}/?source={source}&shot=1&pick={symbol}:{entry_time}" + (f":{kind}" if kind else ""))
             await page.wait_for_function("window.__ready === true", timeout=30000)
             await page.wait_for_timeout(300)
             return await page.locator("#detail").screenshot(type="png")

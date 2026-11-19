@@ -77,12 +77,13 @@ body.shot .why{display:none}body.shot main{grid-template-columns:1fr;padding:8px
 <div class="how" id="how">
 <div data-k="trend"><b>🧭 Тренд</b> · основная прибыль, около 1 сигнала в день. Вход на дневном закрытии, стоп и две цели: на TP1 и TP2 закрываем по четверти, половину держим, пока жив тренд.</div>
 <div data-k="capitulation"><b>⚡ Капитуляция</b> · редкий часовой сигнал после сильного слива с падением открытого интереса. Есть стоп и две цели.</div>
+<div data-k="layers"><b>🧱 BTC Layers</b> · дневная модель только по BTC: макро решает сторону, тренд долю, волатильность размер. Без стопа и целей: сделка закрывается, когда модель разворачивается или уходит в кэш, размер меняется по ходу.</div>
 <div data-k="listing"><b>🆕 Шорт листинга</b> · шорт новых монет на фьючерсах, если первый день слабый. Держим до 60 дней, широкий стоп +50%.</div>
 </div>
 <div class="kpi" id="kpi"></div><div id="paper"></div>
 <main>
 <section class="panel">
-<div class="tools"><span class="seg" id="kinds"><button data-k="all">Все</button><button data-k="trend">🧭</button><button data-k="capitulation">⚡</button><button data-k="listing">🆕</button></span>
+<div class="tools"><span class="seg" id="kinds"><button data-k="all">Все</button><button data-k="trend">🧭</button><button data-k="capitulation">⚡</button><button data-k="listing">🆕</button><button data-k="layers">🧱</button></span>
 <input id="q" placeholder="монета"><label><input type="checkbox" id="onlyOpen">только открытые</label></div>
 <div id="list"></div></section>
 <section class="panel" id="detail">
@@ -98,7 +99,7 @@ const S = {source: q.get('source') || 'live', kind: 'all', open: false, text: ''
 if (q.get('shot')) document.body.classList.add('shot');
 let PA = null, F = {items: [], summary: {}}, view = [], cur = null, shown = 150, cs = [], times = [], tf = '1d', ST = {};
 const $ = id => document.getElementById(id), G = '#3ddc97', R = '#ff6b6b', B = '#5b8cff';
-const KIND = {trend: '🧭 Тренд', capitulation: '⚡ Капитуляция', listing: '🆕 Шорт листинга'};
+const KIND = {trend: '🧭 Тренд', capitulation: '⚡ Капитуляция', listing: '🆕 Шорт листинга', layers: '🧱 BTC Layers'};
 const px = p => p == null ? '—' : '$' + (p >= 1000 ? p.toLocaleString('en-US',{maximumFractionDigits:0}) : p >= 10 ? p.toFixed(2) : p >= 1 ? p.toFixed(3) : p.toPrecision(4));
 const sg = (v, d=1) => v == null || isNaN(v) ? '—' : (v>0?'+':'') + v.toFixed(d) + '%';
 const day = t => new Date(t*1000).toISOString().slice(0,10), dt = t => new Date(t*1000).toISOString().slice(0,16).replace('T',' ');
@@ -184,7 +185,7 @@ function drawCone(t, y, chips){
   return endX;
 }
 // ---------- карточка сделки: план и что произошло с каждым уровнем
-const WHAT = {tp1:'TP1', tp2:'TP2', sl:'Стоп', be:'Безубыток', trend:'Тренд сломался', time:'По времени', delist:'Делистинг', invalid:'Идея сломалась', trail:'Трейлинг', manual:'Вручную'};
+const WHAT = {resize:'Размер', flip:'Разворот', cash:'В кэш', tp1:'TP1', tp2:'TP2', sl:'Стоп', be:'Безубыток', trend:'Тренд сломался', time:'По времени', delist:'Делистинг', invalid:'Идея сломалась', trail:'Трейлинг', manual:'Вручную'};
 const pctFrom = (t, p) => (t.side==='long' ? 1 : -1) * (p / t.entry - 1) * 100;
 const when = (t, ts) => ts ? (t.kind==='capitulation' ? dt(ts) : day(ts)) : '';
 const part = x => x ? Math.round(x*100) + '%' : '';
@@ -197,6 +198,8 @@ function why(t){
   const L = t.side==='long';
   if (t.kind==='trend') return `Почему: тренд ${L?'вверх':'вниз'} на дневках подтвердили почти все сигналы (каналы 10–160 дней и средние). Размер ${t.size_pct}% депозита. `+
     `Как выходим: стоп и цели срабатывают сразу, когда цена их касается. Остаток закрываем по «слому тренда»: это цена, при закрытии дня ${L?'ниже':'выше'} которой тренд считается законченным. Она пересчитывается каждый день и идёт за ценой, поэтому обычно срабатывает раньше стопа и забирает часть прибыли.`;
+  if (t.kind==='layers') return `Почему: дневная модель BTC Layers: макро (газ, ФРС, ликвидность, кривая доходности, премия Coinbase) решает сторону, тренд долю, волатильность размер. `+
+    `Вход ${t.size_pct}% депозита (объём позиции, не маржа). Стопа и целей нет: размер меняется по ходу, сделка закрывается, когда модель разворачивается или уходит в кэш. Каждое изменение приходит постом в канал.`;
   if (t.kind==='listing') return `Почему: новая монета на фьючерсах, первый день закрылся ниже открытия. Новые монеты обычно дешевеют первые недели. Размер ${t.size_pct}% депозита, без целей, выход через 60 дней или по стопу.`;
   return `Почему: резкий слив с падением открытого интереса, позиции вынесло, продавцы выдохлись. Риск ${t.risk_pct?.toFixed(1)}% депозита.`;
 }
@@ -207,7 +210,13 @@ function ticket(t){
     rows.push([k.toUpperCase(), px(t[k]), sg(pctFrom(t,t[k])), e ? `✅ взят ${when(t,e.t)}${e.part ? ', закрыто '+part(e.part) : ''}` : t.open ? `⏳ ждём${t[k+'_part'] ? ', закроем '+part(t[k+'_part']) : ''}` : '— не дошла', 'ct', e ? 'hit' : 'miss']); }
   if (t.stop != null) { const e = hit('sl');
     rows.push(['Стоп', px(t.stop), sg(pctFrom(t,t.stop)), e ? `❌ сработал ${when(t,e.t)}${e.part && e.part < 1 ? ', закрыто '+part(e.part) : ''}` : t.open ? 'стоит' : 'не задет', 'cs', e ? 'bad' : 'miss']); }
-  const fin = ex.find(e => !['tp1','tp2','sl'].includes(e.what));
+  if (t.kind==='layers') {
+    rows.push(['Размер', t.size_pct+'%', '', 'объём позиции от депозита на входе', '', 'miss']);
+    for (const e of ex) rows.push([WHAT[e.what], px(e.price), sg(pctFrom(t,e.price)), e.what==='resize' ? `размер стал ${Math.round(e.part*100)}% депозита · ${when(t,e.t)}`
+      : `${e.what==='flip' ? 'модель развернулась, сделка закрыта' : 'модель ушла в кэш, сделка закрыта'} · ${when(t,e.t)}`, '', pctFrom(t,e.price) > 0 ? 'hit' : 'bad']);
+    if (t.open) rows.push(['Выход', '', '', `держим ${t.size_now}% депозита, пока модель не сменит позицию (пост придёт в канал)`, '', 'miss']);
+  }
+  const fin = t.kind==='layers' ? null : ex.find(e => !['tp1','tp2','sl'].includes(e.what));
   if (fin) rows.push([`Остаток ${part(fin.part)}`, px(fin.price), sg(pctFrom(t,fin.price)), `${WHAT[fin.what]||fin.what} · ${when(t,fin.t)}`, '', pctFrom(t,fin.price) > 0 ? 'hit' : 'bad']);
   else if (t.open && t.kind==='trend') rows.push([`Остаток ${part(t.rem ?? 1)}`, px(t.exit_level), t.exit_level ? sg(pctFrom(t,t.exit_level)) : '',
     `слом тренда: закроем, если день закроется ${t.side==='long'?'ниже':'выше'} ${px(t.exit_level)} (жёлтая линия, двигается за ценой)`, '', 'miss']);
@@ -236,10 +245,15 @@ function renderPaper(){
     PA.accounts.map(a => `<b>${a.exchange[0].toUpperCase()+a.exchange.slice(1)}</b>: ${usd(a.equity)} `+
       `<span class="${a.equity>=a.start?'pos':'neg'}">(${a.equity>=a.start?'+':''}${((a.equity/a.start-1)*100).toFixed(1)}%)</span>, свободно ${usd(a.free)}, открыто ${a.open}, комиссии ${usd(a.fees)}`).join(' · ');
 }
+function layersPaper(t){                       // сделки счёта «BTC Layers» за время этой позиции
+  if (!PA || !PA.trades) return null; const end = t.exit_time || 1e12;
+  return Object.entries(PA.trades).filter(([k]) => k.startsWith('layers:')).flatMap(([k, v]) => {
+    const d = Date.parse(k.slice(7).split(':')[0]) / 1000 + 86400; return d >= t.entry_time - 86400 && d < end ? v : []; });
+}
 function paperRows(t){
-  const tr = PA && PA.trades && t.ref ? PA.trades[t.kind+':'+t.ref] : null; if (!tr) return '';
+  const tr = t.kind==='layers' ? layersPaper(t) : PA && PA.trades && t.ref ? PA.trades[t.kind+':'+t.ref] : null; if (!tr || !tr.length) return '';
   return tr.map(x => { const notional = x.qty * x.entry;
-    return `<div class="tr"><span>🧪 ${x.exchange[0].toUpperCase()+x.exchange.slice(1)}</span><b>${usd(notional)}</b><i>x${x.leverage}</i>`+
+    return `<div class="tr"><span>🧪 ${x.exchange==='layers' ? 'BTC Layers' : x.exchange[0].toUpperCase()+x.exchange.slice(1)}</span><b>${usd(notional)}</b><i>x${x.leverage}</i>`+
       `<em>позиция ${usd(notional)}, маржа ${usd(x.margin)} из депозита, ликвидация ${px(x.liq)}. `+
       `${x.status==='open' ? 'Открыто '+Math.round(x.open_qty/x.qty*100)+'%' : 'Закрыта'}, итог <b class="${x.realized>=0?'pos':'neg'}">${usd(x.realized)}</b> с комиссиями</em></div>`; }).join('');
 }
@@ -275,7 +289,7 @@ async function load(){
   F = await j('api/feed?source='+S.source); F.items = F.items || []; filter(); renderKpi(); renderList();
   try { PA = S.source==='live' ? await j('api/paper') : null; } catch(e) { PA = null; } renderPaper();
   const pick = q.get('pick');                     // ?pick=SYMBOL:время входа — открыть сразу эту сделку (картинка для Telegram)
-  if (pick) { const [ps, pt] = pick.split(':'); const it = F.items.find(x => x.symbol===ps && String(x.entry_time)===pt);
+  if (pick) { const [ps, pt, pk] = pick.split(':'); const it = F.items.find(x => x.symbol===ps && String(x.entry_time)===pt && (!pk || x.kind===pk));
     if (it) { if (!view.includes(it)) view.unshift(it); await select(it); setTimeout(() => { redraw(); window.__ready = true; }, 400); return; } }
   if (view.length) select(view[0]); else { cur = null; s.setData([]); s.setMarkers([]); redraw(); $('ttl').textContent='Нет сигналов'; $('story').innerHTML=''; $('cards').innerHTML=''; $('bdg').innerHTML=''; $('kindname').textContent=''; }
 }
@@ -799,7 +813,20 @@ def make_app(cfg, conn) -> web.Application:
                         "open": r["status"] == "open", "exit_reason": {"stop": "стоп", "time": "по времени"}.get(r["exit_reason"]),
                         "exits": [{"what": "sl" if r["exit_reason"] == "stop" else r["exit_reason"], "t": r["exit_ts"] // 1000,
                                    "price": r["exit_price"], "part": 1.0}] if r["status"] == "closed" else []})
+        try:
+            from . import btc_layers
+            out += btc_layers.live_items(conn)
+        except Exception as e:
+            log.warning("layers feed: %s", e)
         return sorted(out, key=lambda x: x["entry_time"])
+
+    def layers_bt() -> list[dict]:
+        from . import btc_layers
+        f = Path(btc_layers.REPORT)
+        if not f.exists():
+            return []
+        days = json.loads(f.read_text(encoding="utf-8")).get("days", [])
+        return btc_layers.segments(btc_layers.posted_points(days), mark=days[-1].get("px") if days else None)
 
     async def feed_api(request):
         from . import feed as fd
@@ -807,7 +834,13 @@ def make_app(cfg, conn) -> web.Application:
             if not fd.FEED.exists():
                 from . import autoprep
                 return web.json_response({"items": [], "summary": {}, "note": autoprep.STATUS.get("text") or "ещё не посчитана"})
-            return web.json_response(json.loads(fd.FEED.read_text()))
+            F = json.loads(fd.FEED.read_text())
+            L = layers_bt()
+            if L:
+                F["items"] = F.get("items", []) + L
+                days = max((L[-1]["entry_time"] - L[0]["entry_time"]) / 86400, 1)
+                F.setdefault("summary", {})["layers"] = fd.summary(L, days)
+            return web.json_response(F)
         items = live_feed()
         extra = {}
         if fd.FEED.exists():

@@ -127,21 +127,22 @@ class Admin:
             return f"Панель не отвечает: {escape(str(e)[:100])}", kb([self.BACK])
         op = sorted([x for x in items if x.get("open")], key=lambda x: -x["entry_time"])[:12]
         cl = sorted([x for x in items if not x.get("open")], key=lambda x: -(x.get("exit_time") or 0))[:6]
-        rows = [[(snap.label(x), f"snap:{x['symbol']}:{x['entry_time']}")] for x in op + cl]
+        rows = [[(snap.label(x), f"snap:{x['symbol']}:{x['entry_time']}:{x['kind']}")] for x in op + cl]
         text = ("📈 <b>Сделки на графике</b>\n\nНажми на сделку: пришлю картинку графика со входом, целями, стопом и итогом. "
                 f"Сверху {len(op)} открытых, ниже последние закрытые.") if rows else "Сделок пока нет."
         return text, kb(rows + [self.BACK])
 
     async def send_snap(self, chat, data: str):
         from . import snap
-        _, sym, t = data.split(":")
+        _, sym, t, *k = data.split(":")
+        kind = k[0] if k else ""
         port = self.cfg["dashboard"]["port"]
         items = await snap.feed(port)
-        it = next((x for x in items if x["symbol"] == sym and str(x["entry_time"]) == t), None)
+        it = next((x for x in items if x["symbol"] == sym and str(x["entry_time"]) == t and (not kind or x["kind"] == kind)), None)
         if not it:
             return await self.tg.send_message(chat, "Сделка не найдена, открой список заново.")
         try:
-            png = await snap.render(port, "live", sym, int(t))
+            png = await snap.render(port, "live", sym, int(t), kind)
         except Exception as e:
             return await self.tg.send_message(chat, snap.caption(it) + f"\n\n(картинка не получилась: {escape(str(e)[:120])})")
         await self.tg.send_photo(chat, png, snap.caption(it))
@@ -282,7 +283,15 @@ class Admin:
         if hist:
             L += ["", "🕓 <b>Смены позиции</b>"] + [f"   {h['date']}: {pos_text(h['signal'])} при BTC {h['btc']:,.0f}$"
                                                    for h in hist[-6:][::-1]]
-        rows = [[("📈 График и бэктест", "layers_png"), ("🔄 Пересчитать сейчас", "layers_run")],
+        rows = []
+        try:
+            from .btc_layers import live_items
+            op = [x for x in live_items(self.conn) if x.get("open")]
+            if op:
+                rows.append([("📍 Текущая сделка на графике", f"snap:BTCUSDT:{op[-1]['entry_time']}:layers")])
+        except Exception:
+            pass
+        rows += [[("📈 График и бэктест", "layers_png"), ("🔄 Пересчитать сейчас", "layers_run")],
                 [("⏸ Выключить" if on else "▶️ Включить", "layers_tg")], self.BACK]
         return "\n".join(L), kb(rows)
 

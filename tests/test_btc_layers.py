@@ -196,3 +196,17 @@ def test_loop_calculates_at_start(cfg, conn, data, tmp_path, monkeypatch):
     asyncio.run(run())
     assert said and said[0].startswith("✅ BTC Layers:") and settings.get(conn, "btc_layers_state")
     assert dt.has("layers")
+
+
+def test_positions_become_trades_like_other_signals():
+    """Посты модели в ленте как сделки: вход, смены размера, разворот или кэш, итог в % депозита."""
+    pts = [{"t": 1, "signal": -1.0, "px": 100.0}, {"t": 2, "signal": -0.5, "px": 90.0},
+           {"t": 3, "signal": 0.8, "px": 80.0}, {"t": 4, "signal": 0.0, "px": 88.0}, {"t": 5, "signal": 1.0, "px": 90.0}]
+    L = bl.segments(pts, mark=99.0, fee_pct=0)
+    assert [x["side"] for x in L] == ["short", "long", "long"]
+    a, b, c = L
+    assert [e["what"] for e in a["exits"]] == ["resize", "flip"] and a["result_pct"] == pytest.approx(10 + 0.5 * 100 * (1 - 80 / 90), abs=0.01)
+    assert b["exits"][-1]["what"] == "cash" and b["result_pct"] == pytest.approx(8.0)
+    assert c["open"] and c["result_pct"] == pytest.approx(10.0) and c["size_now"] == 100.0
+    days = [{"t": i, "pos": p, "px": 100.0} for i, p in enumerate([0.5, 0.6, 0.8, 0.8, -0.2])]
+    assert [p["signal"] for p in bl.posted_points(days)] == [0.5, 0.8, -0.2]      # мелкие изменения размера без поста

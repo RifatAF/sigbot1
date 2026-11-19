@@ -335,13 +335,73 @@ def report(df: pd.DataFrame, path: str = REPORT) -> dict:
     out = {"final": round(float(b["final"]), 2), "cagr": float(b["cagr"]), "max_dd": float(b["max_dd"]),
            "sharpe": float(b["sharpe"]), "start": str(eq.index[0].date()), "now": state_of(df.iloc[-1]),
            "days": [{"t": int(t.timestamp()), "eq": round(float(e), 2), "bh": round(float(h), 2),
-                     "pos": round(float(df.signal.get(t, 0) or 0), 3)} for t, e, h in zip(eq.index, eq.values, bh.values)]}
+                     "pos": round(float(df.signal.get(t, 0) or 0), 3), "px": round(float(df.btc.get(t)), 2)}
+                    for t, e, h in zip(eq.index, eq.values, bh.values)]}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(out, fh)
     os.replace(tmp, path)
     return out
+
+
+def posted_points(days: list[dict]) -> list[dict]:
+    """Из ежедневных решений бэктеста: только дни, когда модель выпустила бы пост (то же правило, что вживую)."""
+    out, last = [], None
+    for d in days:
+        if d.get("px") is None:
+            continue
+        if last is None or changed(last, d["pos"]):
+            out.append({"t": d["t"] + 86400, "signal": d["pos"], "px": d["px"]})
+            last = d["pos"]
+    return out
+
+
+def segments(points: list[dict], mark: float | None = None, mark_t: int | None = None, fee_pct: float = 0.05) -> list[dict]:
+    """Позиции модели в виде сделок для ленты: сделка от входа в сторону до разворота или кэша.
+    Изменение размера внутри сделки: событие «размер». Итог в % депозита с комиссией тейкера."""
+    out, cur = [], None
+    for i, p in enumerate(points):
+        s = side_of(p["signal"])
+        if cur and s == side_of(cur["_sig"]):                       # та же сторона: новый размер
+            cur["_pnl"] += cur["_sig"] * (p["px"] / cur["_px"] - 1) * 100 - abs(p["signal"] - cur["_sig"]) * fee_pct
+            cur["exits"].append({"what": "resize", "t": p["t"], "price": p["px"], "part": round(abs(p["signal"]), 3)})
+            cur["_sig"], cur["_px"] = p["signal"], p["px"]
+            continue
+        if cur:                                                     # разворот или кэш: сделка закрыта
+            cur["_pnl"] += cur["_sig"] * (p["px"] / cur["_px"] - 1) * 100 - abs(cur["_sig"]) * fee_pct
+            cur["exits"].append({"what": "flip" if s else "cash", "t": p["t"], "price": p["px"], "part": 1.0})
+            out.append(_close_seg(cur, p["px"], p["t"]))
+            cur = None
+        if s:
+            cur = {"kind": "layers", "ref": str(p["t"]), "symbol": "BTCUSDT", "side": "long" if s > 0 else "short",
+                   "entry_time": p["t"], "entry": p["px"], "size_pct": round(abs(p["signal"]) * 100, 1), "exits": [],
+                   "_sig": p["signal"], "_px": p["px"], "_pnl": -abs(p["signal"]) * fee_pct}
+    if cur:
+        m = mark or cur["_px"]
+        cur["_pnl"] += cur["_sig"] * (m / cur["_px"] - 1) * 100
+        it = _close_seg(cur, m, None)
+        it["open"], it["exit"], it["exit_time"], it["size_now"] = True, None, None, round(abs(cur["_sig"]) * 100, 1)
+        out.append(it)
+    return out
+
+
+def _close_seg(c: dict, px: float, t: int | None) -> dict:
+    sd = 1 if c["side"] == "long" else -1
+    it = {k: v for k, v in c.items() if not k.startswith("_")}
+    it.update(open=False, exit=px, exit_time=t, result_pct=round(c["_pnl"], 2),
+              move_pct=round(sd * (px / c["entry"] - 1) * 100, 2))
+    return it
+
+
+def live_items(conn) -> list[dict]:
+    """Живые позиции модели: опубликованные посты из журнала, итог открытой по последней цене BTC."""
+    from . import settings
+    log_ = settings.get(conn, "btc_layers_log") or []
+    pts = [{"t": int(pd.Timestamp(x["date"]).timestamp()) + 86400, "signal": x["signal"], "px": x["btc"]} for x in log_]
+    c = conn.execute("SELECT close FROM candles WHERE symbol='BTCUSDT' AND market='futures' ORDER BY ts DESC LIMIT 1").fetchone()
+    st = settings.get(conn, "btc_layers_state") or {}
+    return segments(pts, mark=c[0] if c else st.get("btc"))
 
 
 class LayersService:

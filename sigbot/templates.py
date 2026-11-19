@@ -327,7 +327,7 @@ def btc_layers(st: dict, prev: dict | None, mode: str, lang: str = "ru", lev: in
     f, ru = Fmt(), lang == "ru"
     x = st["signal"]
     icon = "🟢" if x > 0 else "🔴" if x < 0 else "⚪️"
-    lines = ["🧭 <b>BTC Layers</b>  #BTC", "Дневная модель по биткоину: макро решает сторону, тренд долю" if ru else
+    lines = ["🧱 <b>BTC Layers</b>  #BTC", "Дневная модель по биткоину: макро решает сторону, тренд долю" if ru else
              "Daily BTC model: macro picks the side, trend the size", ""]
     lines.append(f"{icon} {'Позиция' if ru else 'Position'}: {_layers_pos(f, x, ru)}")
     if prev is not None:
