@@ -113,7 +113,8 @@ class Live:
         self.conn.execute("INSERT INTO trade_state VALUES (?,?,?,?,?,?)", (sid, "open", c.stop, 1.0, 0, sig.ts))
         if getattr(self, "demo", None):
             dist = abs(c.entry - c.stop) / c.entry * 100
-            await self.demo.open("capitulation", str(sid), c.symbol, c.side, sz.risk_pct / dist * 100 if dist else 0)
+            await self.demo.open("capitulation", str(sid), c.symbol, c.side, sz.risk_pct / dist * 100 if dist else 0,
+                                 stop=c.stop)
 
         d = {**sig.__dict__, "features": feats}
         facts = {"coin": c.symbol.replace("USDT", ""), "side": c.side, "divergences": feats.get("divergences"),

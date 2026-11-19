@@ -96,7 +96,8 @@ class ListingShorts:
                               "status, exchange) VALUES (?,?,?,?,?,?,?, 'open', ?)",
                               (sym, onboard, entry_close, entry, stop, due, lc["notional_pct"], ex))
             if getattr(self, "demo", None):
-                await self.demo.open("listing", sym, sym, "short", lc["notional_pct"], ex if ex == "bybit" else None)
+                await self.demo.open("listing", sym, sym, "short", lc["notional_pct"], ex if ex == "bybit" else None,
+                                     stop=stop)
             text, nums = templates.listing_signal(sym, entry, stop, lc, self.cfg["publishing"]["mode"], self._lang(), ex)
             posts.append(await self.pub.publish("listing", text, nums))
         # 2. ведение: стоп по максимуму суток, иначе выход по времени

@@ -334,7 +334,7 @@ class LivePortfolio:
                                                               levels["stop"], levels["tp1"], levels["tp2"], json.dumps(st)))
             rid = self.conn.execute("SELECT MAX(id) FROM trend_signals").fetchone()[0]
             if getattr(self, "demo", None) and not first:
-                await self.demo.open("trend", str(rid), sym, side, abs(w) * 100)
+                await self.demo.open("trend", str(rid), sym, side, abs(w) * 100, stop=levels["stop"])
             if not first:                       # первый запуск: не заваливаем канал, ниже одним списком
                 text, nums = templates.trend_signal(sym, side, px, abs(w) * 100, lv, mode, stats, levels, lang)
                 sent = await self.pub.publish("trend_signal", text, nums) or sent

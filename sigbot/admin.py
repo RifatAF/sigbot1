@@ -100,22 +100,37 @@ class Admin:
         dt = DemoTrader(self.cfg, self.conn)
         pc = self.eff().get("paper", {})
         on = pc.get("enabled", True)
+        risk = pc.get("sizing", "risk") == "risk"
+        rk = pc.get("risk_pct") or {}
         text = ("🧪 <b>Бумажная торговля</b> " + ("✅ вкл" if on else "❌ выкл") + "\n"
                 f"Виртуальные счета по {pc.get('start_usd', 100)}$: бот торгует свои сигналы как живой трейдер. "
-                f"Цены и комиссии бирж, плечо x{pc.get('leverage', 5)} (меняется кнопками ниже, действует на новые сделки), "
-                "фандинг, ликвидация. Ордера на биржу не уходят.\n\n"
-                + await dt.report())
+                "Цены и комиссии бирж, фандинг, ликвидация. Ордера на биржу не уходят.\n\n")
+        if risk:
+            text += ("🛡 <b>Риск-менеджмент: торгуем от риска, а не от плеча</b>\n"
+                     f"• На стопе сделка теряет: тренд {rk.get('trend')}%, листинг {rk.get('listing')}%, капитуляция "
+                     f"{rk.get('capitulation')}% капитала. Сильный сигнал (больше обычного) до x{pc.get('strength_cap', 2):g} риска.\n"
+                     "• Размер позиции = риск / расстояние до стопа. Стоп дальше, позиция меньше, потеря та же.\n"
+                     f"• Плечо бот ставит сам, до x{pc.get('max_leverage', 50)}: максимальное, при котором ликвидация дальше стопа. "
+                     "В сделке лежит минимум денег, а потеря на стопе не меняется.\n"
+                     f"• Все открытые сделки вместе на стопах теряют не больше {pc.get('max_open_risk_pct', 20)}% капитала: "
+                     "новая сделка урезается или пропускается.\n"
+                     "• Если минимум биржи даёт риск вдвое больше плана, сделка пропускается.\n"
+                     f"На истории 2020–2026 так: +82% в год при просадке до −28%. Было, по доле из сигнала: +120% в год при "
+                     "просадке до −48%. Прибыль ниже, зато просадка почти вдвое меньше: на один процент просадки прибыли больше.\n\n")
+        text += await dt.report()
         lev = int(pc.get("leverage", 5))
-        text += (f"\n\nМинимальная позиция по правилам биржи (обычно 5$, у BTC и ETH больше). При плече x{lev} "
-                 f"на неё уходит маржа от {5 / lev:.2f}$. Если сигнал меньше минимума, бот поднимает позицию до минимума, "
-                 "а если маржи не хватает, пропускает сделку и пишет почему.")
-        levs = [(("• " if lev == x else "") + f"x{x}", f"plev:{x}") for x in (1, 3, 5, 10, 20)]
+        if not risk:
+            text += (f"\n\nПлечо x{lev}. Минимальная позиция по правилам биржи (обычно 5$, у BTC и ETH больше): при x{lev} "
+                     f"на неё уходит маржа от {5 / lev:.2f}$.")
+        levs = [(("• " if lev == x else "") + f"x{x}", f"plev:{x}") for x in (1, 3, 5, 10, 20)] if not risk else []
+        rows_mode = [("🛡 От риска ✅" if risk else "🛡 Включить торговлю от риска", "psz:risk" if not risk else "noop"),
+                     ("📊 Доля из сигнала" + (" ✅" if not risk else ""), "psz:signal" if risk else "noop")]
         total, miss = dt.live_counts()
         rows = [[(f"▶️ Открыть живые сигналы ({miss} из {total})", "demo_live")]] if miss else []
         if total:
             text += (f"\n\nЖивых открытых сигналов: {total}, на бумажном счёте нет: {miss}. "
                      "Кнопка «Открыть живые сигналы» откроет их по текущей цене (не по цене сигнала).")
-        return text, kb(rows + [[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], levs,
+        return text, kb(rows + [[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], rows_mode] + ([levs] if levs else []) + [
                          [(f"♻️ Начать заново с {pc.get('start_usd', 100)}$", "demo_reset")], self.BACK])
 
     async def snaps_screen(self):
@@ -435,6 +450,9 @@ class Admin:
             await self.tg.send_message(chat, f"🧪 Открыто сигналов: {n}" + (f", уже были на счёте: {had}" if had else "")
                                        + ". Подробности по каждой сделке выше, итог ниже.")
             return await self.tg.send_message(chat, *await self.demo_screen())
+        if data.startswith("psz:"):
+            settings.put(self.conn, "paper.sizing", data[4:])
+            return await self.show(chat, await self.demo_screen(), mid)
         if data.startswith("plev:"):
             settings.put(self.conn, "paper.leverage", int(data[5:]))
             return await self.show(chat, await self.demo_screen(), mid)

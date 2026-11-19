@@ -107,13 +107,42 @@ class DemoTrader:
         return px * (1 + slip if buy else 1 - slip)
 
     # ---------- сделки
+    def open_risk(self, ex: str) -> float:
+        """Сколько $ потеряют все открытые сделки счёта, если сработают их стопы."""
+        return self.conn.execute("SELECT COALESCE(SUM(risk_usd*open_qty/qty),0) FROM demo_trades "
+                                 "WHERE exchange=? AND status='open' AND risk_usd IS NOT NULL", (ex,)).fetchone()[0]
+
+    def plan(self, kind: str, ex: str, px: float, stop: float | None, notional_pct: float, rem: float = 1.0) -> dict:
+        """Риск-менеджмент: размер от риска до стопа, сильный сигнал до x2 риска, предел общего риска,
+        плечо так, чтобы ликвидация была дальше стопа (в сделке лежит минимум денег, а потеря на стопе та же)."""
+        pc, eq = self.pc(), self.equity(ex)
+        lev_fixed = max(1, int(pc.get("leverage", 5)))
+        if pc.get("sizing", "risk") != "risk" or not stop or kind not in (pc.get("risk_pct") or {}):
+            return {"notional": eq * notional_pct / 100 * rem, "lev": lev_fixed, "risk_usd": None, "note": ""}
+        dist = abs(stop / px - 1)
+        if dist <= 0:
+            return {"notional": 0, "lev": lev_fixed, "risk_usd": None, "note": ""}
+        med = (pc.get("strength_median") or {}).get(kind)
+        strength = min(float(pc.get("strength_cap", 2.0)), notional_pct / med) if med else 1.0
+        risk_pct = float(pc["risk_pct"][kind]) * max(strength, 0.25)
+        left = float(pc.get("max_open_risk_pct", 20)) / 100 * eq - self.open_risk(ex)
+        risk_usd = eq * risk_pct / 100 * rem
+        if risk_usd > left + 1e-9:                       # лимит общего риска: сделка пропускается (урезать хуже на истории)
+            risk_usd = 0.0
+        note = f"риск {risk_usd:.2f}$ ({risk_usd / eq * 100:.1f}% капитала) до стопа {stop:g}"
+        lev = lev_fixed
+        if pc.get("auto_leverage", True):
+            # ликвидация на расстоянии 1/плечо минус поддерживающая маржа: держим её на 1% цены дальше стопа
+            lev = max(1, min(int(pc.get("max_leverage", 50)), int(1 / (dist + MMR + 0.01))))
+        return {"notional": risk_usd / dist, "lev": lev, "risk_usd": risk_usd, "note": note, "min_risk": 1e-9}
+
     async def open(self, kind: str, ref: str, symbol: str, side: str, notional_pct: float, exchange: str | None = None,
-                   rem: float = 1.0):
-        """Вход: notional_pct % от капитала счёта (как размер в сигнале). exchange: только этот счёт, иначе оба.
-        rem: какая доля позиции ещё открыта у сигнала (TP1 уже взят: 0.75), открывается только она."""
+                   rem: float = 1.0, stop: float | None = None):
+        """Вход. С риск-менеджментом (paper.sizing: risk) размер считается от стопа: на стопе теряем risk_pct капитала.
+        Без стопа (BTC Layers) или sizing: signal: notional_pct % капитала, как в сигнале.
+        exchange: только этот счёт, иначе оба. rem: какая доля позиции ещё открыта у сигнала (TP1 уже взят: 0.75)."""
         if not self.on() or notional_pct <= 0:
             return
-        lev = max(1, int(self.pc().get("leverage", 5)))
         for ex in self.exchanges() + (["layers"] if exchange == "layers" else []):
             if exchange and ex != exchange:
                 continue
@@ -124,12 +153,22 @@ class DemoTrader:
             if not px:
                 await self._say(f"🧪 {name}: {symbol.replace('USDT', '')} не открыт, нет цены")
                 continue
-            eq, rule, coin = self.equity(ex), await self.rules(ex, symbol), symbol.replace("USDT", "")
-            notional = eq * notional_pct / 100 * rem
+            rule, coin = await self.rules(ex, symbol), symbol.replace("USDT", "")
+            pl = self.plan(kind, ex, px, stop, notional_pct, rem)
+            notional, lev = pl["notional"], pl["lev"]
+            if pl["risk_usd"] is not None and pl["risk_usd"] < pl.get("min_risk", 0):
+                await self._say(f"🧪 {name}: {coin} не открыт: общий риск открытых сделок уже на пределе "
+                                f"({self.pc().get('max_open_risk_pct', 20)}% капитала)")
+                continue
             # минимум биржи: сумма позиции и минимальное количество монет (у BTC и ETH он заметно больше 5$)
             need = max(rule["min_notional"], rule["min_qty"] * px)
             note = ""
             if notional < need:
+                if pl["risk_usd"] and stop and need * abs(stop / px - 1) > 2 * pl["risk_usd"]:
+                    await self._say(f"🧪 {name}: {coin} не открыт: минимум биржи {need:.2f}$ при стопе {abs(stop / px - 1) * 100:.1f}% "
+                                    f"даёт риск {need * abs(stop / px - 1):.2f}$, а по плану {pl['risk_usd']:.2f}$. "
+                                    "Риск-менеджмент важнее сделки")
+                    continue
                 note = f" (по сигналу {notional:.2f}$, поднял до минимума биржи {need:.2f}$)"
                 notional = need * 1.001
             fill = self._fill(px, side == "long")
@@ -143,13 +182,17 @@ class DemoTrader:
             fee = notional * FEES.get(ex, 0.05) / 100
             sd = 1 if side == "long" else -1
             liq = fill * (1 - sd / lev + sd * MMR)
+            risk_usd = qty * abs(fill - stop) if stop and pl["risk_usd"] is not None else None
             self._book(ex, -fee, fee=fee)
             self.conn.execute("INSERT INTO demo_trades (exchange, kind, ref, symbol, side, qty, open_qty, entry, opened_ts, status, "
-                              "margin, leverage, liq, fees, funding, realized, last_funding) VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?,0,?,?)",
+                              "margin, leverage, liq, fees, funding, realized, last_funding, stop, risk_usd) "
+                              "VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?,0,?,?,?,?)",
                               (ex, kind, ref, symbol, side, qty / rem, qty, fill, int(time.time() * 1000), margin / rem, lev, liq, fee,
-                               -fee, int(time.time() * 1000) // (8 * HOUR)))       # итог сделки с комиссией входа
+                               -fee, int(time.time() * 1000) // (8 * HOUR), stop,
+                               risk_usd / rem if risk_usd is not None else None))       # итог сделки с комиссией входа
+            why = f"\n   {pl['note']}; плечо x{lev} подобрано так, что ликвидация ({liq:g}) дальше стопа" if pl["note"] else ""
             await self._say(f"🧪 {name}: {'лонг' if side == 'long' else 'шорт'} {symbol.replace('USDT', '')} по {fill:g}, "
-                            f"позиция {notional:.2f}$ (маржа {margin:.2f}$, плечо x{lev}){note}, комиссия {fee:.3f}$")
+                            f"позиция {notional:.2f}$ (маржа {margin:.2f}$, плечо x{lev}){note}, комиссия {fee:.3f}${why}")
 
     async def open_live(self) -> tuple[int, int]:
         """Открыть на бумажных счетах все живые сигналы, которые уже открыты, но на счёт ещё не попали.
@@ -160,23 +203,24 @@ class DemoTrader:
         todo = []
         for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open'"):
             st = json.loads(r["state"]) if r["state"] else {}
-            todo.append(("trend", str(r["id"]), r["symbol"], r["side"], r["size_pct"], None, st.get("rem", 1.0)))
+            todo.append(("trend", str(r["id"]), r["symbol"], r["side"], r["size_pct"], None, st.get("rem", 1.0), r["stop"]))
         for r in self.conn.execute("SELECT * FROM listing_trades WHERE status='open'"):
             ex = r["exchange"] if "exchange" in r.keys() else None
-            todo.append(("listing", r["symbol"], r["symbol"], "short", r["notional_pct"], "bybit" if ex == "bybit" else None, 1.0))
+            todo.append(("listing", r["symbol"], r["symbol"], "short", r["notional_pct"], "bybit" if ex == "bybit" else None, 1.0,
+                         r["stop"]))
         for r in self.conn.execute("SELECT s.id, s.symbol, s.side, s.entry, s.stop, s.risk_pct, t.remaining FROM signals s "
                                    "JOIN trade_state t ON t.signal_id=s.id WHERE t.status='open' AND s.source='live'"):
             dist = abs(r["entry"] - r["stop"]) / r["entry"] * 100
             if dist:
                 todo.append(("capitulation", str(r["id"]), r["symbol"], r["side"], r["risk_pct"] / dist * 100, None,
-                             r["remaining"] or 1.0))
+                             r["remaining"] or 1.0, r["stop"]))
         opened = had = 0
-        for kind, ref, sym, side, pct, ex, rem in todo:
+        for kind, ref, sym, side, pct, ex, rem, stop in todo:
             if self.conn.execute("SELECT 1 FROM demo_trades WHERE kind=? AND ref=?", (kind, ref)).fetchone():
                 had += 1
                 continue
             n = self.conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0]
-            await self.open(kind, ref, sym, side, pct, ex, rem=max(min(rem, 1.0), 0.01))
+            await self.open(kind, ref, sym, side, pct, ex, rem=max(min(rem, 1.0), 0.01), stop=stop)
             opened += self.conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0] > n
         return opened, had
 

@@ -95,3 +95,32 @@ def test_open_live_signals_button(cfg, conn):
     assert dt.live_counts() == (2, 0) and asyncio.run(dt.open_live()) == (0, 2)
     asyncio.run(dt.reduce("trend", "1", 0.25, "TP2"))                       # следующая четверть исходной позиции
     assert conn.execute("SELECT open_qty/qty FROM demo_trades WHERE kind='trend'").fetchone()[0] == pytest.approx(0.5)
+
+
+def test_risk_sizing_leverage_and_open_risk_limit(cfg, conn):
+    """От риска: на стопе теряем 2.5% капитала, плечо такое, что ликвидация дальше стопа, общий риск не больше 20%."""
+    px = [100.0]
+    dt, said = make(cfg, conn, px)
+    settings.put(conn, "paper.exchanges", ["binance"])
+    asyncio.run(dt.open("trend", "1", "AUSDT", "long", 13.9, stop=90.0))       # обычный сигнал, стоп −10%
+    r = conn.execute("SELECT * FROM demo_trades").fetchone()
+    assert r["qty"] * r["entry"] == pytest.approx(25.0, rel=0.01)             # 2.5$ / 10% = 25$ позиция
+    assert r["leverage"] == 8 and r["liq"] < 90.0                              # x8: ликвидация ниже стопа
+    assert r["risk_usd"] == pytest.approx(2.5, rel=0.02) and r["margin"] == pytest.approx(25 / 8, rel=0.01)
+    assert "ликвидация" in said[-1] and "дальше стопа" in said[-1]
+    asyncio.run(dt.open("trend", "2", "BUSDT", "short", 27.8, stop=101.0))     # сильный сигнал x2, узкий стоп 1%
+    r2 = conn.execute("SELECT * FROM demo_trades WHERE ref='2'").fetchone()
+    assert r2["risk_usd"] == pytest.approx(5.0, rel=0.05) and r2["leverage"] == 39   # 1 / (1% стоп + 0.5% + 1% запас)
+    for i in range(3, 10):                                                      # до лимита 20%: 2.5+5+2.5*5 = 20
+        asyncio.run(dt.open("trend", str(i), f"C{i}USDT", "long", 13.9, stop=90.0))
+    n = conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0]
+    assert dt.open_risk("binance") <= 20.0 + 1e-6 and n == 6 and "на пределе" in said[-1]
+
+
+def test_exchange_minimum_does_not_break_risk(cfg, conn):
+    px = [50000.0]
+    dt, said = make(cfg, conn, px)
+    settings.put(conn, "paper.exchanges", ["binance"])
+    settings.put(conn, "paper_rules_binance", {"_ts": 9e12, "BTCUSDT": {"min_notional": 100.0, "min_qty": 0.001, "step": 0.001}})
+    asyncio.run(dt.open("trend", "1", "BTCUSDT", "long", 13.9, stop=45000.0))   # план 25$, минимум 100$: риск 10$ > 2×2.5$
+    assert not conn.execute("SELECT 1 FROM demo_trades").fetchone() and "Риск-менеджмент важнее" in said[-1]

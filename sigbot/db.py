@@ -140,7 +140,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
     _add_columns(conn, "trend_signals", {"stop": "REAL", "tp1": "REAL", "tp2": "REAL", "state": "TEXT"})
     _add_columns(conn, "listing_trades", {"exchange": "TEXT DEFAULT 'binance'"})
     _add_columns(conn, "demo_trades", {"margin": "REAL", "leverage": "REAL", "liq": "REAL", "fees": "REAL DEFAULT 0",
-                                       "funding": "REAL DEFAULT 0", "last_funding": "INTEGER", "exit": "REAL"})
+                                       "funding": "REAL DEFAULT 0", "last_funding": "INTEGER", "exit": "REAL",
+                                       "stop": "REAL", "risk_usd": "REAL"})
     return conn
 
 
