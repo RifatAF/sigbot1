@@ -94,7 +94,7 @@ async def test_live_signal_to_close(cfg, conn, tg, monkeypatch):
     lv = live.Live(cfg, conn, Publisher(cfg, conn, tg, -100, 7), NoLLM(), bl)
     ids = await lv.scan(t)
     assert len(ids) == 1
-    assert "SOL · ЛОНГ" in tg.sent[0][1] and "TP1" in tg.sent[0][1] and tg.sent[0][2]   # пост с картинкой
+    assert "SOL · ЛОНГ" in tg.sent[0][1] and "Цель 1" in tg.sent[0][1] and tg.sent[0][2]   # пост с картинкой
     assert await lv.scan(t) == []                                   # по открытому символу второго входа нет
 
     sig_ts = conn.execute("SELECT ts FROM signals").fetchone()[0]
@@ -108,7 +108,7 @@ async def test_live_signal_to_close(cfg, conn, tg, monkeypatch):
     total_r = conn.execute("SELECT SUM(pnl_r) FROM outcomes").fetchone()[0]
     assert total_r == pytest.approx(0.5 * 1.2 + 0.5 * 2.5)
     assert conn.execute("SELECT status FROM trade_state").fetchone()[0] == "closed"
-    assert "+1.85R" in tg.sent[-1][1]
+    assert "Выход #SOL" in tg.sent[-1][1] and "Итог" in tg.sent[-1][1]
 
     tr = lv.closed_trades(0, sig_ts + 10 * HOUR)
     assert len(tr) == 1 and tr[0]["r"] == pytest.approx(1.85)

@@ -87,7 +87,7 @@ def test_post_numbers_pass_guard():
         text, nums = bl_text(st, {"signal": 0.5}, lang)
         verify(text, nums)
     text, _ = bl_text({**st, "signal": 0.0}, None, "ru")
-    assert "КЭШ" in text
+    assert "Выход #BTC" in text and "Позиции нет" in text
 
 
 def bl_text(st, prev, lang):

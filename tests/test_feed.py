@@ -59,17 +59,17 @@ def test_live_trend_signal_targets_then_trend_exit(cfg, conn):
     conn.execute("INSERT INTO portfolio_weights VALUES (?,?,?)", (d1 - DAY, "BUSDT", 0.05))
     asyncio.run(lp.signals(d2, C, {"AUSDT": 0.3}))
     post = tg.sent[-1][1]
-    assert "A · ЛОНГ" in post and "TP1" in post and "TP2" in post and "Стоп" in post
+    assert "A · ЛОНГ" in post and "Цель 1" in post and "Цель 2" in post and "Стоп" in post
     row = conn.execute("SELECT * FROM trend_signals").fetchone()
     e = row["entry"]
     assert row["status"] == "open" and row["stop"] < e < row["tp1"] < row["tp2"]
     _hourly(conn, "AUSDT", int(d3), [(e, e, e)] * 3 + [(row["tp1"], row["tp1"] + .01, e)] + [(row["tp2"], row["tp2"] + .01, e)])
     asyncio.run(lp.manage(int(d3) + 6 * 3_600_000))
-    assert any("TP1" in t and "Закрыто 25%" in t for _, t in tg.sent) and any("TP2" in t for _, t in tg.sent)
+    assert any("цель 1" in t and "Закрыли 25%" in t for _, t in tg.sent) and any("цель 2" in t for _, t in tg.sent)
     asyncio.run(lp.signals(d3, C, {}))                                 # портфель убрал монету: остаток закрыт
     row = conn.execute("SELECT * FROM trend_signals").fetchone()
     assert row["status"] == "closed" and row["result_pct"] > 0
-    assert any("TP1 ✅" in t and "TP2 ✅" in t and "тренд сломался" in t and "Итог" in t for _, t in tg.sent)
+    assert any("Выход #A" in t and "цель 1 ✅" in t and "цель 2 ✅" in t and "слом тренда" in t and "Итог" in t for _, t in tg.sent)
 
 
 def test_live_trend_stop(cfg, conn):
