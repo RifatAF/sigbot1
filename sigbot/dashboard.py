@@ -50,7 +50,7 @@ label{color:var(--mut);font-size:13px;display:flex;gap:6px;align-items:center;cu
 .badge{padding:2px 8px;border-radius:5px;font-weight:700;font-size:12px;margin-left:6px}.long{background:#123b2c;color:var(--g)}.short{background:#3d1820;color:var(--r)}
 .pill{background:#2a3550;color:#a8c1ff;border-radius:5px;padding:1px 7px;font-size:11px;margin-left:6px}
 .more{width:100%;margin-top:8px}
-#dhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}#dhead .ttl{font-size:20px;font-weight:700}
+#dhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;position:sticky;top:0;z-index:6;background:var(--card);padding:6px 0}#dhead .ttl{font-size:20px;font-weight:700}
 .wrap{position:relative;height:430px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 #c{position:absolute;inset:0}#ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
 #empty{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;text-align:center;color:var(--mut);padding:20px;background:var(--bg)}
@@ -98,7 +98,7 @@ if (q.get('shot')) document.body.classList.add('shot');
 let F = {items: [], summary: {}}, view = [], cur = null, shown = 150, cs = [], times = [], tf = '1d', ST = {};
 const $ = id => document.getElementById(id), G = '#3ddc97', R = '#ff6b6b', B = '#5b8cff';
 const KIND = {trend: '🧭 Тренд', capitulation: '⚡ Капитуляция', listing: '🆕 Шорт листинга'};
-const px = p => p == null ? '—' : p >= 1000 ? p.toLocaleString('en-US',{maximumFractionDigits:0}) : p >= 1 ? p.toFixed(p>=100?2:3) : p.toPrecision(4);
+const px = p => p == null ? '—' : '$' + (p >= 1000 ? p.toLocaleString('en-US',{maximumFractionDigits:0}) : p >= 10 ? p.toFixed(2) : p >= 1 ? p.toFixed(3) : p.toPrecision(4));
 const sg = (v, d=1) => v == null || isNaN(v) ? '—' : (v>0?'+':'') + v.toFixed(d) + '%';
 const day = t => new Date(t*1000).toISOString().slice(0,10), dt = t => new Date(t*1000).toISOString().slice(0,16).replace('T',' ');
 const coin = s => s.replace('USDT','');
@@ -107,7 +107,7 @@ async function j(u){ const r = await fetch(u + (u.includes('?')?'&':'?') + tok);
 const chart = LightweightCharts.createChart($('c'), {autoSize:true, layout:{background:{color:'#0d1017'}, textColor:'#9aa3b5', fontSize:12},
   grid:{vertLines:{visible:false}, horzLines:{color:'#161b26'}}, crosshair:{mode:0},
   rightPriceScale:{borderVisible:false, scaleMargins:{top:0.1, bottom:0.08}}, timeScale:{borderVisible:false, rightOffset:6},
-  localization:{priceFormatter: p => p <= 0 ? '' : px(p)}});
+  localization:{priceFormatter: p => p <= 0 ? '' : px(p).slice(1)}});
 const s = chart.addCandlestickSeries({upColor:G, downColor:R, borderVisible:false, wickUpColor:G, wickDownColor:R, priceLineVisible:false});
 s.applyOptions({autoscaleInfoProvider: o => { const r = o(), t = cur; if (!r || !t) return r;
   const lv = [t.stop, t.tp1, t.tp2, t.exit_level, ...coneEnds(t)].filter(v => v != null && v > 0); if (!lv.length) return r;
@@ -135,7 +135,7 @@ function draw(){
   const chips = [];
   const lvl = (p, name, col, dash) => { if (p == null) return; hline(x1, x2, y(p), col, dash); chips.push([y(p), `${name} ${px(p)}  ${sg(pctFrom(t,p))}`, col]); };
   lvl(t.tp2, 'TP2', G, [5,3]); lvl(t.tp1, 'TP1', G, [5,3]); lvl(t.stop, 'Стоп', R, [5,3]);
-  hline(x1, x2, ye, B); chips.push([ye, 'Вход ' + px(t.entry), '#7aa7ff']);
+  hline(x1, x2, ye, B); chips.push([ye, coin(t.symbol) + ' вход ' + px(t.entry), '#7aa7ff']);
   if (t.open && t.exit_level) { hline(x1, W, y(t.exit_level), '#ffd27a', [2,3]); chips.push([y(t.exit_level), 'Слом тренда ' + px(t.exit_level), '#ffd27a']); }
   const cx = drawCone(t, y, chips) || 0;
   chips.sort((a,b) => a[0]-b[0]); for (let i = 1; i < chips.length; i++) if (chips[i][0] - chips[i-1][0] < 22) chips[i][0] = chips[i-1][0] + 22;
@@ -201,7 +201,7 @@ function why(t){
 }
 function ticket(t){
   const ex = t.exits||[], hit = w => ex.find(e => e.what===w), rows = [];
-  rows.push(['Вход', px(t.entry), '', `${t.side==='long'?'🟢 лонг':'🔴 шорт'} · ${when(t, t.entry_time)}`, 'ce']);
+  rows.push(['Вход', px(t.entry), '', `<b>${coin(t.symbol)}</b> ${t.side==='long'?'🟢 лонг':'🔴 шорт'} · ${when(t, t.entry_time)}`, 'ce']);
   for (const k of ['tp1','tp2']) if (t[k] != null) { const e = hit(k);
     rows.push([k.toUpperCase(), px(t[k]), sg(pctFrom(t,t[k])), e ? `✅ взят ${when(t,e.t)}${e.part ? ', закрыто '+part(e.part) : ''}` : t.open ? `⏳ ждём${t[k+'_part'] ? ', закроем '+part(t[k+'_part']) : ''}` : '— не дошла', 'ct', e ? 'hit' : 'miss']); }
   if (t.stop != null) { const e = hit('sl');
