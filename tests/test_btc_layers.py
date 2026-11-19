@@ -210,3 +210,15 @@ def test_positions_become_trades_like_other_signals():
     assert c["open"] and c["result_pct"] == pytest.approx(10.0) and c["size_now"] == 100.0
     days = [{"t": i, "pos": p, "px": 100.0} for i, p in enumerate([0.5, 0.6, 0.8, 0.8, -0.2])]
     assert [p["signal"] for p in bl.posted_points(days)] == [0.5, 0.8, -0.2]      # мелкие изменения размера без поста
+
+
+def test_first_post_before_log_still_shows_and_old_report_recomputed(conn, tmp_path):
+    settings.put(conn, "btc_layers_posted", {"date": "2026-11-16", "signal": -0.9, "btc": 64856.0})
+    items = bl.live_items(conn)
+    assert len(items) == 1 and items[0]["side"] == "short" and items[0]["open"] and items[0]["size_pct"] == 90.0
+    f = tmp_path / "r.json"
+    assert not bl.report_ok(str(f))
+    f.write_text('{"days": [{"t": 1, "eq": 100, "bh": 100, "pos": 0.5}]}')
+    assert not bl.report_ok(str(f))                       # старый формат без цен: пересчитать
+    f.write_text('{"days": [{"t": 1, "eq": 100, "bh": 100, "pos": 0.5, "px": 60000}]}')
+    assert bl.report_ok(str(f))

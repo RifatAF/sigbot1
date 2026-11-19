@@ -831,11 +831,12 @@ def make_app(cfg, conn) -> web.Application:
     async def feed_api(request):
         from . import feed as fd
         if request.query.get("source") == "backtest":
-            if not fd.FEED.exists():
-                from . import autoprep
-                return web.json_response({"items": [], "summary": {}, "note": autoprep.STATUS.get("text") or "ещё не посчитана"})
-            F = json.loads(fd.FEED.read_text())
             L = layers_bt()
+            if not fd.FEED.exists():                   # история остальных стратегий ещё считается: BTC Layers показать сразу
+                from . import autoprep
+                F = {"items": [], "summary": {}, "note": autoprep.STATUS.get("text") or "ещё не посчитана"}
+            else:
+                F = json.loads(fd.FEED.read_text())
             if L:
                 F["items"] = F.get("items", []) + L
                 days = max((L[-1]["entry_time"] - L[0]["entry_time"]) / 86400, 1)
@@ -846,7 +847,9 @@ def make_app(cfg, conn) -> web.Application:
         if fd.FEED.exists():
             bt = json.loads(fd.FEED.read_text())
             extra = {"paths": bt.get("paths", {}), "plan": bt.get("plan")}
-        return web.json_response({"items": items, "summary": {"all": fd.summary(items, 30)}, **extra})
+        summ = {"all": fd.summary(items, 30)}
+        summ.update({k: fd.summary([x for x in items if x["kind"] == k], 30) for k in ("trend", "capitulation", "listing", "layers")})
+        return web.json_response({"items": items, "summary": summ, **extra})
 
     async def paper_api(_):
         """Бумажные счета: депозит, капитал, плечо и сделки по сигналам (ключ kind:ref)."""

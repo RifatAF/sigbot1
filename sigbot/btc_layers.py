@@ -345,6 +345,15 @@ def report(df: pd.DataFrame, path: str = REPORT) -> dict:
     return out
 
 
+def report_ok(path: str = REPORT) -> bool:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh).get("days") or []
+        return bool(d) and d[-1].get("px") is not None
+    except Exception:
+        return False
+
+
 def posted_points(days: list[dict]) -> list[dict]:
     """Из ежедневных решений бэктеста: только дни, когда модель выпустила бы пост (то же правило, что вживую)."""
     out, last = [], None
@@ -398,6 +407,9 @@ def live_items(conn) -> list[dict]:
     """Живые позиции модели: опубликованные посты из журнала, итог открытой по последней цене BTC."""
     from . import settings
     log_ = settings.get(conn, "btc_layers_log") or []
+    if not log_:                                       # первый пост был до журнала: берём его
+        p0 = settings.get(conn, "btc_layers_posted")
+        log_ = [p0] if p0 else []
     pts = [{"t": int(pd.Timestamp(x["date"]).timestamp()) + 86400, "signal": x["signal"], "px": x["btc"]} for x in log_]
     c = conn.execute("SELECT close FROM candles WHERE symbol='BTCUSDT' AND market='futures' ORDER BY ts DESC LIMIT 1").fetchone()
     st = settings.get(conn, "btc_layers_state") or {}
@@ -426,7 +438,8 @@ class LayersService:
         while True:
             now = int(time.time() * 1000)
             try:
-                st = await self.run_daily(now)
+                # старый отчёт без цен (до сделок в ленте) или его нет: пересчитать сразу, пост не повторится
+                st = await self.run_daily(now, force=first and not report_ok(self.report_path))
                 if first:
                     st = st or settings.get(self.conn, "btc_layers_state")
                     if not self.on():
