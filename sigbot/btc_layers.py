@@ -323,7 +323,7 @@ def changed(prev: float | None, new: float, step: float = 0.25) -> bool:
 def state_of(row: pd.Series) -> dict:
     return {"date": str(row.name.date()), "signal": round(float(np.clip(row.signal, -LIMIT, LIMIT)), 4),
             "macro": float(row.macro), "regime": int(row.regime), "trend": float(row.trend), "vol": float(row.vol),
-            "pci": bool(row.boost), "btc": float(row.btc),
+            "pci": bool(row.boost), "btc": float(row.btc), "side": float(row.side_x), "vt": float(row.vt),
             "parts": {k: (None if pd.isna(row[k]) else float(row[k])) for k in ("gas", "fed", "liq", "curve", "ttf", "prem")}}
 
 
@@ -396,9 +396,12 @@ class LayersService:
         prev = settings.get(self.conn, "btc_layers_posted")          # с чем сравнивать: последний опубликованный пост
         if self.pub and (prev is None or changed(prev["signal"], st["signal"])):
             eff = settings.effective(self.cfg, self.conn)["publishing"]
-            text, nums = templates.btc_layers(st, prev, eff.get("mode", "paper"), eff.get("lang", "ru"))
+            lev = int(settings.effective(self.cfg, self.conn).get("paper", {}).get("leverage", 5))
+            text, nums = templates.btc_layers(st, prev, eff.get("mode", "paper"), eff.get("lang", "ru"), lev)
             if await self.pub.publish("btc_layers", text, nums) in ("sent", "pending", "no_telegram"):
                 settings.put(self.conn, "btc_layers_posted", st)
+                log_ = (settings.get(self.conn, "btc_layers_log") or [])[-19:]
+                settings.put(self.conn, "btc_layers_log", log_ + [{"date": st["date"], "signal": st["signal"], "btc": st["btc"]}])
         settings.put(self.conn, "btc_layers_state", st)
         settings.put(self.conn, "btc_layers_day", day)
         if self.demo and lc(self.cfg, self.conn).get("paper", True):

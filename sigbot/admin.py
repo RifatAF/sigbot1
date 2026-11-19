@@ -67,7 +67,7 @@ class Admin:
             [("🧾 Итоги недели", "pm"), ("📤 Сделки в Excel", "export")],
             [("🗣 Блогеры", "blog"), ("📌 Пост о методе", "method")],
             [("📈 Сделки на графике", "snaps"), ("📱 Панель на телефоне", "phone")],
-            [("🧪 Бумажная торговля (100$)", "demo")],
+            [("🧪 Бумажная торговля (100$)", "demo"), ("🧭 BTC Layers", "layers")],
             [("💻 Компьютеры", "pcs"), ("❓ Помощь", "help")],
             [("✅ Снять аварийную остановку" if p.get("kill_switch") else "⛔ Аварийная остановка", "kill")],
         ]
@@ -230,6 +230,61 @@ class Admin:
                 [("🧭 BTC Layers: " + ("выключить" if e.get("btc_layers", {}).get("enabled") else "включить"), "tg:btc_layers.enabled")],
                 self.BACK]
         return text, kb(rows)
+
+    def layers_screen(self):
+        """Как работает BTC Layers: позиция и откуда она, слои, бэктест, бумажный счёт, история смен."""
+        from .btc_layers import pos_text
+        from .demo import DemoTrader
+        e = self.eff().get("btc_layers", {})
+        s = settings.get(self.conn, "btc_layers_state")
+        on = bool(e.get("enabled"))
+        L = [f"🧭 <b>BTC Layers</b> {'✅ работает' if on else '❌ выключен'}",
+             "Дневная модель по биткоину. Раз в сутки после закрытия дня UTC считает, сколько держать BTC: "
+             "макро решает сторону, тренд долю, волатильность размер. Пост в канал только при смене позиции.", ""]
+        if not s:
+            L.append("Расчёта ещё не было: нажми «🔄 Пересчитать сейчас».")
+        else:
+            x = s["signal"]
+            lev = int(self.eff().get("paper", {}).get("leverage", 5))
+            L.append(f"<b>Сейчас: {pos_text(x)}</b> (по закрытию {s['date']}, BTC {s['btc']:,.0f}$)")
+            if abs(x) > 1e-9:
+                L.append(f"На 100$: {'лонг' if x > 0 else 'шорт'} на {abs(x) * 100:.0f}$, маржа при x{lev}: {abs(x) * 100 / lev:.0f}$")
+            if s.get("side") is not None:
+                L.append(f"Расчёт: доля {s['side']:+.1f} × размер {s['vt']:.2f} = {x:+.2f}")
+            L += ["", f"1️⃣ Макро {s['macro']:+.2f} → режим <b>{'бычий' if s['regime'] > 0 else 'медвежий'}</b> "
+                      "(смена только за ±0.10)"]
+            names = {"gas": "газ США", "fed": "ожидания ФРС", "liq": "ликвидность ФРС", "curve": "кривая доходности",
+                     "ttf": "газ Европа к США", "prem": "премия Coinbase"}
+            for k, v in s["parts"].items():
+                if v is not None:
+                    L.append(f"   {'🟢' if v > 0 else '🔴'} {names.get(k, k)} {v:+.2f}")
+            L.append(f"2️⃣ Тренд {s['trend']:+.2f} ({'вверх' if s['trend'] > 0 else 'вниз'}): "
+                     + ("полная доля" if (s['trend'] > 0) == (s['regime'] > 0) else "против макро, доля меньше или кэш"))
+            L.append(f"3️⃣ Волатильность {s['vol'] * 100:.0f}% в год: размер {s.get('vt', 0):.2f} (цель {e.get('vol_target', 0.4) * 100:.0f}%, не больше 1.5)")
+            bt = s.get("bt")
+            if bt:
+                L += ["", f"📊 На истории с {bt['start']}: 100$ → {bt['final']:,.0f}$, {bt['cagr'] * 100:+.0f}% в год, "
+                          f"просадка до {bt['max_dd'] * 100:.0f}%"]
+        dt = DemoTrader(self.cfg, self.conn)
+        if dt.has("layers"):
+            a = dt.account("layers")
+            eq = dt.equity("layers")
+            L += ["", f"🧪 <b>Бумажный счёт</b>: {eq:.2f}$ ({(eq / a['start_usd'] - 1) * 100:+.1f}% от {a['start_usd']:.0f}$), "
+                      f"комиссии {a['fees']:.2f}$, фандинг {-a['funding']:+.2f}$"]
+            for r in self.conn.execute("SELECT * FROM demo_trades WHERE exchange='layers' AND status='open'"):
+                L.append(f"   {'🟢 лонг' if r['side'] == 'long' else '🔴 шорт'} BTC {r['open_qty'] * r['entry']:.2f}$ "
+                         f"от {r['entry']:,.0f}, маржа {r['margin'] * r['open_qty'] / r['qty']:.2f}$")
+            done = self.conn.execute("SELECT COUNT(*), COALESCE(SUM(realized),0) FROM demo_trades "
+                                     "WHERE exchange='layers' AND status='closed'").fetchone()
+            if done[0]:
+                L.append(f"   закрыто сделок {done[0]}, итог {done[1]:+.2f}$")
+        hist = settings.get(self.conn, "btc_layers_log") or []
+        if hist:
+            L += ["", "🕓 <b>Смены позиции</b>"] + [f"   {h['date']}: {pos_text(h['signal'])} при BTC {h['btc']:,.0f}$"
+                                                   for h in hist[-6:][::-1]]
+        rows = [[("📈 График и бэктест", "layers_png"), ("🔄 Пересчитать сейчас", "layers_run")],
+                [("⏸ Выключить" if on else "▶️ Включить", "layers_tg")], self.BACK]
+        return "\n".join(L), kb(rows)
 
     def layers_now(self) -> str:
         s = settings.get(self.conn, "btc_layers_state")
@@ -396,6 +451,28 @@ class Admin:
                 from .demo import DemoTrader
                 DemoTrader(self.cfg, self.conn).reset()
             return await self.show(chat, await self.demo_screen(), mid)
+        if data == "layers":
+            return await self.show(chat, self.layers_screen(), mid)
+        if data == "layers_tg":
+            settings.put(self.conn, "btc_layers.enabled", not e.get("btc_layers", {}).get("enabled"))
+            return await self.show(chat, self.layers_screen(), mid)
+        if data == "layers_run":
+            from .btc_layers import LayersService
+            from .demo import DemoTrader
+            await self.show(chat, ("🧭 Считаю BTC Layers, до минуты…", kb([self.BACK])), mid)
+            try:
+                await LayersService(self.cfg, self.conn, self.pub, DemoTrader(self.cfg, self.conn, self.pub.notify_owner)
+                                    if self.pub else None).run_daily(int(time.time() * 1000), force=True)
+            except Exception as ex:
+                await self.tg.send_message(chat, f"⚠️ Расчёт не удался: {escape(str(ex)[:150])}")
+            return await self.show(chat, self.layers_screen(), mid)
+        if data == "layers_png":
+            from . import snap
+            try:
+                png = await snap.render_layers(self.cfg["dashboard"]["port"])
+                return await self.tg.send_photo(chat, png, "🧭 BTC Layers: позиция, бэктест с 2018 года и позиция по дням")
+            except Exception as ex:
+                return await self.tg.send_message(chat, f"Картинка не получилась: {escape(str(ex)[:150])}")
         if data == "snaps":
             return await self.show(chat, await self.snaps_screen(), mid)
         if data.startswith("snap:"):

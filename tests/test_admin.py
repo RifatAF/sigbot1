@@ -131,3 +131,15 @@ def test_strategies_screen_shows_btc_layers(cfg, conn):
     assert "BTC Layers" in text and "ещё не было" in text
     settings.put(conn, "btc_layers_state", {"signal": -0.9, "date": "2026-11-16"})
     assert "шорт 90% депозита" in adm.strat_screen()[0]
+
+
+def test_layers_screen_explains_position(cfg, conn):
+    from sigbot import settings
+    from sigbot.admin import Admin
+    from sigbot.bloggers import Bloggers
+    adm = Admin(cfg, conn, None, 7, None, None, None, Bloggers(cfg, conn), None, None)
+    assert "Пересчитать" in str(adm.layers_screen()[1])
+    settings.put(conn, "btc_layers_state", {"signal": -0.9, "date": "2026-11-16", "btc": 64856.0, "macro": -0.61, "regime": -1,
+                                            "trend": -1.0, "vol": 0.44, "side": -1.0, "vt": 0.9, "parts": {"gas": 0.19}})
+    t = adm.layers_screen()[0]
+    assert "ШОРТ 90% депозита" in t and "маржа при x5: 18$" in t and "доля -1.0 × размер 0.90" in t

@@ -57,6 +57,25 @@ def caption(t: dict) -> str:
     return "\n".join(lines)
 
 
+async def render_layers(port: int) -> bytes:
+    """Картинка страницы BTC Layers: позиция, бэктест с 2018 года, слои."""
+    from playwright.async_api import async_playwright
+    exe = os.environ.get("CHROMIUM_PATH") or "/opt/pw-browsers/chromium"
+    async with async_playwright() as pw:
+        kw = {"args": ["--no-sandbox"]}
+        if Path(exe).exists():
+            kw["executable_path"] = exe
+        browser = await pw.chromium.launch(**kw)
+        try:
+            page = await browser.new_page(viewport={"width": 520, "height": 900}, device_scale_factor=2)
+            await page.goto(f"http://127.0.0.1:{port}/layers")
+            await page.wait_for_function("window.__ready === true", timeout=30000)
+            await page.wait_for_timeout(300)
+            return await page.locator("#shot").screenshot(type="png")
+        finally:
+            await browser.close()
+
+
 async def render(port: int, source: str, symbol: str, entry_time: int) -> bytes:
     from playwright.async_api import async_playwright
     exe = os.environ.get("CHROMIUM_PATH") or "/opt/pw-browsers/chromium"

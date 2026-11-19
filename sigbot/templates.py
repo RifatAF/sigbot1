@@ -322,7 +322,7 @@ def _layers_pos(f: Fmt, x: float, ru: bool, bold: bool = True) -> str:
     return (f"<b>{side} {v}%</b>" if bold else f"{side} {v}%") + (" депозита" if ru else " of capital")
 
 
-def btc_layers(st: dict, prev: dict | None, mode: str, lang: str = "ru") -> tuple[str, list[float]]:
+def btc_layers(st: dict, prev: dict | None, mode: str, lang: str = "ru", lev: int = 5) -> tuple[str, list[float]]:
     """BTC Layers: позиция по BTC на сутки. Пост только при смене направления или размера."""
     f, ru = Fmt(), lang == "ru"
     x = st["signal"]
@@ -335,6 +335,21 @@ def btc_layers(st: dict, prev: dict | None, mode: str, lang: str = "ru") -> tupl
     if abs(x) > 1e-9:
         lines.append((f"Пример: на 100$ депозита {'лонг' if x > 0 else 'шорт'} на {f.n(abs(x) * 100, 0)}$ по цене около {f.p(st['btc'])}"
                       if ru else f"Example: on a 100$ account, {'long' if x > 0 else 'short'} {f.n(abs(x) * 100, 0)}$ near {f.p(st['btc'])}"))
+    if abs(x) > 1e-9:
+        m = abs(x) * 100 / lev
+        lines.append((f"Это объём позиции, не маржа: при плече x{f.i(lev)} из 100$ занято {f.n(m, 0)}$ маржи" if ru else
+                      f"This is position size, not margin: at x{f.i(lev)} leverage it uses {f.n(m, 0)}$ of margin per 100$"))
+    if st.get("side") is not None and st.get("vt"):
+        sd = st["side"]
+        why = (("макро и тренд вверх" if sd >= 1 else "макро вверх, тренд вниз: половина" if sd > 0 else
+                "макро и тренд вниз" if sd < 0 else "тренд против макро: вне рынка") if ru else
+               ("macro and trend up" if sd >= 1 else "macro up, trend down: half" if sd > 0 else
+                "macro and trend down" if sd < 0 else "trend against macro: flat"))
+        tv = st["vt"] * st["vol"] * 100
+        lines.append((f"Как посчитано: доля {f.n(sd, 1, sign=True)} ({why}) × размер {f.n(st['vt'], 2)} "
+                      f"(цель волатильности {f.n(tv, 0)}% / сейчас {f.n(st['vol'] * 100, 0)}%) = {f.n(x, 2, sign=True)}" if ru else
+                      f"How: side {f.n(sd, 1, sign=True)} ({why}) × size {f.n(st['vt'], 2)} "
+                      f"(target vol {f.n(tv, 0)}% / now {f.n(st['vol'] * 100, 0)}%) = {f.n(x, 2, sign=True)}"))
     lines.append("Без стопа и целей: позиция меняется только по следующему посту модели" if ru else
                  "No stop or targets: the position changes only with the next model post")
     reg = st["regime"] > 0
