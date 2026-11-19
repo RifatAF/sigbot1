@@ -104,8 +104,10 @@ class DemoTrader:
         return px * (1 + slip if buy else 1 - slip)
 
     # ---------- сделки
-    async def open(self, kind: str, ref: str, symbol: str, side: str, notional_pct: float, exchange: str | None = None):
-        """Вход: notional_pct % от капитала счёта (как размер в сигнале). exchange: только этот счёт, иначе оба."""
+    async def open(self, kind: str, ref: str, symbol: str, side: str, notional_pct: float, exchange: str | None = None,
+                   rem: float = 1.0):
+        """Вход: notional_pct % от капитала счёта (как размер в сигнале). exchange: только этот счёт, иначе оба.
+        rem: какая доля позиции ещё открыта у сигнала (TP1 уже взят: 0.75), открывается только она."""
         if not self.on() or notional_pct <= 0:
             return
         lev = max(1, int(self.pc().get("leverage", 5)))
@@ -120,7 +122,7 @@ class DemoTrader:
                 await self._say(f"🧪 {name}: {symbol.replace('USDT', '')} не открыт, нет цены")
                 continue
             eq, rule, coin = self.equity(ex), await self.rules(ex, symbol), symbol.replace("USDT", "")
-            notional = eq * notional_pct / 100
+            notional = eq * notional_pct / 100 * rem
             # минимум биржи: сумма позиции и минимальное количество монет (у BTC и ETH он заметно больше 5$)
             need = max(rule["min_notional"], rule["min_qty"] * px)
             note = ""
@@ -141,10 +143,48 @@ class DemoTrader:
             self._book(ex, -fee, fee=fee)
             self.conn.execute("INSERT INTO demo_trades (exchange, kind, ref, symbol, side, qty, open_qty, entry, opened_ts, status, "
                               "margin, leverage, liq, fees, funding, realized, last_funding) VALUES (?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?,0,?,?)",
-                              (ex, kind, ref, symbol, side, qty, qty, fill, int(time.time() * 1000), margin, lev, liq, fee,
+                              (ex, kind, ref, symbol, side, qty / rem, qty, fill, int(time.time() * 1000), margin / rem, lev, liq, fee,
                                -fee, int(time.time() * 1000) // (8 * HOUR)))       # итог сделки с комиссией входа
             await self._say(f"🧪 {name}: {'лонг' if side == 'long' else 'шорт'} {symbol.replace('USDT', '')} по {fill:g}, "
                             f"позиция {notional:.2f}$ (маржа {margin:.2f}$, плечо x{lev}){note}, комиссия {fee:.3f}$")
+
+    async def open_live(self) -> tuple[int, int]:
+        """Открыть на бумажных счетах все живые сигналы, которые уже открыты, но на счёт ещё не попали.
+        Вход по текущей цене. Возвращает (сколько сигналов открыто, сколько уже было на счёте)."""
+        import json
+        if not self.on():
+            return 0, 0
+        todo = []
+        for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open'"):
+            st = json.loads(r["state"]) if r["state"] else {}
+            todo.append(("trend", str(r["id"]), r["symbol"], r["side"], r["size_pct"], None, st.get("rem", 1.0)))
+        for r in self.conn.execute("SELECT * FROM listing_trades WHERE status='open'"):
+            ex = r["exchange"] if "exchange" in r.keys() else None
+            todo.append(("listing", r["symbol"], r["symbol"], "short", r["notional_pct"], "bybit" if ex == "bybit" else None, 1.0))
+        for r in self.conn.execute("SELECT s.id, s.symbol, s.side, s.entry, s.stop, s.risk_pct, t.remaining FROM signals s "
+                                   "JOIN trade_state t ON t.signal_id=s.id WHERE t.status='open' AND s.source='live'"):
+            dist = abs(r["entry"] - r["stop"]) / r["entry"] * 100
+            if dist:
+                todo.append(("capitulation", str(r["id"]), r["symbol"], r["side"], r["risk_pct"] / dist * 100, None,
+                             r["remaining"] or 1.0))
+        opened = had = 0
+        for kind, ref, sym, side, pct, ex, rem in todo:
+            if self.conn.execute("SELECT 1 FROM demo_trades WHERE kind=? AND ref=?", (kind, ref)).fetchone():
+                had += 1
+                continue
+            n = self.conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0]
+            await self.open(kind, ref, sym, side, pct, ex, rem=max(min(rem, 1.0), 0.01))
+            opened += self.conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0] > n
+        return opened, had
+
+    def live_counts(self) -> tuple[int, int]:
+        """(открытых живых сигналов, из них ещё не на бумажном счёте)."""
+        refs = [("trend", str(r[0])) for r in self.conn.execute("SELECT id FROM trend_signals WHERE status='open'")]
+        refs += [("listing", r[0]) for r in self.conn.execute("SELECT symbol FROM listing_trades WHERE status='open'")]
+        refs += [("capitulation", str(r[0])) for r in self.conn.execute(
+            "SELECT s.id FROM signals s JOIN trade_state t ON t.signal_id=s.id WHERE t.status='open' AND s.source='live'")]
+        miss = sum(1 for k, r in refs if not self.conn.execute("SELECT 1 FROM demo_trades WHERE kind=? AND ref=?", (k, r)).fetchone())
+        return len(refs), miss
 
     async def reduce(self, kind: str, ref: str, part: float | None, why: str):
         """Закрыть долю part исходной позиции (None: всё, что осталось)."""

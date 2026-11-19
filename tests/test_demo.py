@@ -77,3 +77,21 @@ def test_paper_exchange_rules_min_qty_and_step(cfg, conn):
     assert conn.execute("SELECT COUNT(*) FROM demo_trades").fetchone()[0] == 1 and "требует маржу" in said[-1]
     asyncio.run(dt.reduce("trend", "1", 0.25, "TP1"))                   # 0.0005 BTC меньше шага 0.001: часть не закрыть
     assert conn.execute("SELECT open_qty FROM demo_trades").fetchone()[0] == pytest.approx(0.002) and "держу всю позицию" in said[-1]
+
+
+def test_open_live_signals_button(cfg, conn):
+    import json
+    dt, said = make(cfg, conn, [10.0])
+    settings.put(conn, "paper.exchanges", ["binance"])
+    conn.execute("INSERT INTO trend_signals (symbol, side, open_day, entry, size_pct, state) VALUES ('AUSDT','long',0,9,20,?)",
+                 (json.dumps({"rem": 0.75}),))
+    conn.execute("INSERT INTO listing_trades (symbol, onboard_ts, entry_ts, entry, stop, exit_due_ts, notional_pct, status, exchange) "
+                 "VALUES ('NEWUSDT',0,0,10,15,0,6,'open','binance')")
+    assert dt.live_counts() == (2, 2)
+    assert asyncio.run(dt.open_live()) == (2, 0)
+    t = conn.execute("SELECT * FROM demo_trades WHERE kind='trend'").fetchone()
+    assert t["open_qty"] == pytest.approx(0.75 * t["qty"])                  # TP1 уже взят: открыто 75% позиции
+    assert t["open_qty"] * t["entry"] == pytest.approx(15, rel=1e-3)        # 20% от 100$ × 0.75
+    assert dt.live_counts() == (2, 0) and asyncio.run(dt.open_live()) == (0, 2)
+    asyncio.run(dt.reduce("trend", "1", 0.25, "TP2"))                       # следующая четверть исходной позиции
+    assert conn.execute("SELECT open_qty/qty FROM demo_trades WHERE kind='trend'").fetchone()[0] == pytest.approx(0.5)

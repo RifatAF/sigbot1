@@ -110,7 +110,12 @@ class Admin:
                  f"на неё уходит маржа от {5 / lev:.2f}$. Если сигнал меньше минимума, бот поднимает позицию до минимума, "
                  "а если маржи не хватает, пропускает сделку и пишет почему.")
         levs = [(("• " if lev == x else "") + f"x{x}", f"plev:{x}") for x in (1, 3, 5, 10, 20)]
-        return text, kb([[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], levs,
+        total, miss = dt.live_counts()
+        rows = [[(f"▶️ Открыть живые сигналы ({miss} из {total})", "demo_live")]] if miss else []
+        if total:
+            text += (f"\n\nЖивых открытых сигналов: {total}, на бумажном счёте нет: {miss}. "
+                     "Кнопка «Открыть живые сигналы» откроет их по текущей цене (не по цене сигнала).")
+        return text, kb(rows + [[("Выключить" if on else "Включить", "demo_tg"), ("🔄 Обновить", "demo")], levs,
                          [(f"♻️ Начать заново с {pc.get('start_usd', 100)}$", "demo_reset")], self.BACK])
 
     async def snaps_screen(self):
@@ -359,6 +364,14 @@ class Admin:
             return
         if data == "help":
             return await self.show(chat, self.help_screen(), mid)
+        if data == "demo_live":
+            from .demo import DemoTrader
+            await self.show(chat, ("🧪 Открываю живые сигналы на бумажных счетах…", kb([self.BACK])), mid)
+            dt = DemoTrader(self.cfg, self.conn, self.pub.notify_owner if self.pub else None)
+            n, had = await dt.open_live()
+            await self.tg.send_message(chat, f"🧪 Открыто сигналов: {n}" + (f", уже были на счёте: {had}" if had else "")
+                                       + ". Подробности по каждой сделке выше, итог ниже.")
+            return await self.tg.send_message(chat, *await self.demo_screen())
         if data.startswith("plev:"):
             settings.put(self.conn, "paper.leverage", int(data[5:]))
             return await self.show(chat, await self.demo_screen(), mid)
