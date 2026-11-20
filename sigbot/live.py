@@ -224,6 +224,11 @@ class Live:
         return m
 
     async def daily_note(self):
+        """Раз в день в канал: все открытые позиции и что с ними сейчас (заметка о рынке больше не публикуется)."""
+        from . import positions
+        return await positions.publish(self.cfg, self.conn, self.pub)
+
+    async def market_note(self):
         m = self.market_snapshot()
         facts = {"btc_change_direction": None if "btc_change_24h" not in m else
                  ("up" if m["btc_change_24h"] > 0 else "down"),
