@@ -121,7 +121,8 @@ def build_html(symbol: str, side: str, candles: list[dict], levels: dict, zones:
         ("TP1", _fmt(tp1, prec), "g"),
         ("TP2", _fmt(tp2, prec), "g"),
         ("Risk", f"{risk_pct:.2f}%" if risk_pct is not None else "—", "n"),
-        ("Leverage", f"x{leverage:.1f}" if leverage is not None else "—", "n"),
+        # «плечо» здесь было отношением позиции к депозиту (x0.3), такого плеча на бирже нет: показываем размер позиции
+        ("Size", f"{leverage * 100:.0f}% of capital" if leverage is not None else "—", "n"),
     ]
     tiles_html = "".join(f'<div class="t {c}"><span>{escape(k)}</span><b>{escape(v)}</b></div>' for k, v, c in tiles)
     rr = abs(tp2 - entry) / r

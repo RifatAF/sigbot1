@@ -487,7 +487,7 @@ function render(){
     const c = P ? [['Цена входа',t.entry?px(t.entry):'','c-e'],['Цена выхода',t.exit?px(t.exit):'', ''],
         ['Движение в нашу сторону',`<span class="${t.pnl>0?'pos':'neg'}">${res}</span>`,''],['Статус',t.exit_time?'закрыта':'открыта','']]
       : [['Вход',px(t.entry),'c-e'],['Стоп',px(t.stop),'c-s'],['TP1',px(t.tp1),'c-t'],['TP2',px(t.tp2),'c-t'],
-        ['Риск', t.risk_pct!=null ? t.risk_pct.toFixed(2)+'%' : '', ''],['Плечо', t.leverage!=null ? 'x'+t.leverage.toFixed(1) : '', ''],
+        ['Риск', t.risk_pct!=null ? t.risk_pct.toFixed(2)+'%' : '', ''],['Позиция', t.leverage!=null ? Math.round(t.leverage*100)+'% депозита' : '', ''],
         ['Итог', `<span class="${t.r>0?'pos':t.r<0?'neg':''}">${res}</span>`, ''],['Закрыта', EXIT[t.exit_event] || (t.exit_time?'':'—'), '']];
     $('det').innerHTML = c.filter(x=>x[1]!=='').map(([k,v,cl]) => `<div class="card ${cl}"><span>${k}</span><b>${v}</b></div>`).join('');
   }
