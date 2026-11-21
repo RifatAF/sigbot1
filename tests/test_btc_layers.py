@@ -222,3 +222,62 @@ def test_first_post_before_log_still_shows_and_old_report_recomputed(conn, tmp_p
     assert not bl.report_ok(str(f))                       # старый формат без цен: пересчитать
     f.write_text('{"days": [{"t": 1, "eq": 100, "bh": 100, "pos": 0.5, "px": 60000}]}')
     assert bl.report_ok(str(f))
+
+
+def with_coins(d, seed=3):
+    rng = np.random.default_rng(seed)
+    days = d["btc"].index
+    coins = {}
+    for i, c in enumerate(bl.COINS):
+        px = d["btc"] if c == "BTC" else pd.Series(10 * (i + 1) * np.exp(np.cumsum(rng.normal(0, 0.05, len(days)))), index=days)
+        coins[c] = pd.DataFrame({"c": px, "v": 1e9 / (i + 1) / px})
+    return {**d, "coins": coins}
+
+
+def test_coin_portfolio_post_and_paper(cfg, conn, data, tmp_path):
+    """v6: пост портфеля монет проходит проверку цифр, бумажный счёт держит каждую монету по своей доле."""
+    d = with_coins(data)
+    settings.put(conn, "paper.enabled", True)
+    dt = DemoTrader(cfg, conn, prices=lambda ex, s: float(d["coins"][s.replace("USDT", "")].c.iloc[-1]))
+    pub = Pub()
+    sv = bl.LayersService(cfg, conn, pub, dt)
+    sv.report_path = str(tmp_path / "bl.json")
+    sv.cfg = {**cfg, "btc_layers": {**cfg["btc_layers"], "enabled": True, "coins": True}}
+    st = asyncio.run(sv.run_daily(86_400_000 * 20000, d=d))
+    assert st["coins"] and len(st["coins"]) <= 6 and "bt_coins" in st
+    assert len(pub.posts) == 1 and "портфель монет" in pub.posts[0]
+    for c, w in st["coins"].items():
+        px = st["coin_px"][c]
+        net = dt.net_notional("layers", px, f"{c}USDT")
+        if abs(w) * 100 >= 5:                                   # больше минимума биржи 5$
+            assert net == pytest.approx(w * 100, rel=0.06, abs=1.0)
+    # монета ушла из портфеля: позиция по ней закрывается
+    c0 = next(iter(st["coins"]))
+    asyncio.run(dt.layers_target(0.0, "d9", band=0.05, symbol=f"{c0}USDT"))
+    assert dt.net_notional("layers", 1.0, f"{c0}USDT") == 0
+
+
+def test_coin_post_rule_and_guard():
+    a = {"coins": {"BTC": -0.18, "ETH": -0.13}, "coin_px": {"BTC": 60000.0, "ETH": 3000.0}}
+    assert bl.coins_changed(None, a)
+    assert not bl.coins_changed(a, {"coins": {"BTC": -0.2, "ETH": -0.12}})
+    assert bl.coins_changed(a, {"coins": {"BTC": -0.18}})                       # ETH вышла
+    assert bl.coins_changed(a, {"coins": {"BTC": 0.1, "ETH": -0.13}})           # BTC развернулся
+    assert bl.coins_changed(a, {"coins": {"BTC": -0.4, "ETH": -0.2}})           # сдвиг больше 0.25
+    from sigbot import templates
+    b = {"coins": {"BTC": 0.12, "SOL": -0.1, "ETH": -0.13}, "coin_px": {"BTC": 61000.0, "SOL": 140.5, "ETH": 3010.0}}
+    for lang in ("ru", "en"):
+        text, nums = templates.btc_layers_coins(b, a, "paper", lang)
+        verify(text, nums)
+        assert "#BTC" in text and "#SOL" in text and "#ETH" in text
+
+
+def test_old_btc_position_shrinks_below_minimum_is_closed(cfg, conn):
+    """Переход с одного BTC на портфель: доля BTC стала меньше минимума биржи, старая позиция не застревает."""
+    settings.put(conn, "paper.enabled", True)
+    settings.put(conn, "paper_rules_binance", {"_ts": 9e12, "BTCUSDT": {"min_notional": 100.0, "min_qty": 0.001, "step": 0.001}})
+    dt = DemoTrader(cfg, conn, prices=lambda ex, s: 50000.0)
+    asyncio.run(dt.layers_target(-0.9, "d1"))
+    assert dt.net_notional("layers", 50000.0, "BTCUSDT") < 0
+    asyncio.run(dt.layers_target(-0.18, "d2", band=0.05))
+    assert dt.net_notional("layers", 50000.0, "BTCUSDT") == 0

@@ -329,6 +329,31 @@ def btc_layers(st: dict, prev: dict | None, mode: str, lang: str = "ru", lev: in
     return _lines_end(lines, mode, f), f.numbers
 
 
+def btc_layers_coins(st: dict, prev: dict | None, mode: str, lang: str = "ru") -> tuple[str, list[float]]:
+    """BTC Layers, портфель монет (v6): строка на каждую монету, у которой сменилась сторона или размер."""
+    f, ru = Fmt(), lang == "ru"
+    cur, old, px = st.get("coins") or {}, (prev or {}).get("coins") or {}, st.get("coin_px") or {}
+    total = sum(abs(v) for v in cur.values())
+    lines = [f"🧱 <b>BTC Layers · {'портфель монет' if ru else 'coin portfolio'}</b>",
+             (f"Всего в позициях {f.n(total * 100, 0)}% депозита" if ru else f"Total exposure {f.n(total * 100, 0)}% of capital"), ""]
+    dep = "депозита" if ru else "of capital"
+    for c in sorted(set(cur) | set(old), key=lambda c: -abs(cur.get(c, 0))):
+        x, p = cur.get(c, 0.0), old.get(c, 0.0)
+        price = f" · {f.p(px[c])}" if c in px else ""
+        if abs(x) < 1e-9:
+            lines.append(f"🏁 #{c} · {_side('long' if p > 0 else 'short', lang)}: {'выход' if ru else 'exit'}{price}")
+        elif abs(p) < 1e-9 or (p > 0) != (x > 0):
+            lines.append(f"{'🟢' if x > 0 else '🔴'} #{c} · {_side('long' if x > 0 else 'short', lang)} "
+                         f"{f.n(abs(x) * 100, 0)}% {dep}{price}")
+        elif abs(x - p) >= 0.005:
+            lines.append(f"↔️ #{c} · {_side('long' if x > 0 else 'short', lang)} {f.n(abs(p) * 100, 0)}% → "
+                         f"{f.n(abs(x) * 100, 0)}% {dep}{price}")
+        else:
+            lines.append(f"▪️ #{c} · {_side('long' if x > 0 else 'short', lang)} {f.n(abs(x) * 100, 0)}% {dep}")
+    lines += ["", ("Стопов нет: позиции меняет только следующий пост" if ru else "No stops: only the next post changes positions")]
+    return _lines_end(lines, mode, f), f.numbers
+
+
 EV = {"ru": {"tp1": "✅ {c} {s}: TP1 {p}", "tp2": "🎯 {c} {s}: TP2 {p}", "sl": "❌ {c} {s}: стоп {p}"},
       "en": {"tp1": "✅ {c} {s}: TP1 {p}", "tp2": "🎯 {c} {s}: TP2 {p}", "sl": "❌ {c} {s}: stopped at {p}"}}
 

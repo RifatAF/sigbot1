@@ -142,10 +142,77 @@ def fetch_all(cache_dir: str | None = None) -> dict:
         ust=_treasury(), effr=effr, rrp=rrp, soma=soma, tga=_tga(),
         cb=_coinbase_daily(), bn=_binance_daily(),
     )
+    try:
+        d["coins"] = fetch_coins()          # портфель монет v6; без них модель работает только по BTC
+    except Exception:
+        pass
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
         pd.to_pickle(d, os.path.join(cache_dir, "raw.pkl"))
     return d
+
+
+# ───────── Мультимонетный портфель (v6): те же макро-сигналы, у каждой монеты свой тренд,
+# вселенная = топ-6 по долларовому объёму за 90 дней на дату, лёгкий наклон к сильным (90д), общий риск = как у BTC-модели.
+COINS = ["BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "LTC", "LINK", "AVAX", "TRX", "BCH"]
+
+
+def fetch_coins(coins=COINS) -> dict:
+    """Дневные закрытия и объёмы монет (Yahoo, без ключей) с 2016 года."""
+    out = {}
+    for c in coins:
+        u = f"https://query1.finance.yahoo.com/v8/finance/chart/{c}-USD?period1=1451606400&period2={int(time.time()) + 86400}&interval=1d"
+        j = json.loads(_get(u))["chart"]["result"][0]
+        q = j["indicators"]["quote"][0]
+        d = pd.DataFrame({"c": q["close"], "v": q["volume"]}, index=pd.to_datetime(j["timestamp"], unit="s").normalize()).dropna()
+        out[c] = d[~d.index.duplicated(keep="last")]
+    return out
+
+
+def _trend(price: pd.Series) -> pd.Series:
+    votes = [np.where(price >= (price.rolling(lb).max() + price.rolling(lb).min()) / 2, 1.0, -1.0) for lb in (10, 20, 40, 80, 160)]
+    ma = np.where(price.rolling(20).mean() > price.rolling(50).mean(), 1.0, -1.0)
+    return pd.Series((sum(votes) / 5 + ma) / 2, index=price.index).where(price.rolling(160).count() >= 160)
+
+
+def multi_portfolio(df: pd.DataFrame, coin_data: dict, topn: int = 6, mom_lb: int = 90, tilt: float = 1.0, window: int = 90) -> pd.DataFrame:
+    """Целевые доли по монетам (знак = сторона). df — результат compute(); coin_data — fetch_coins()."""
+    idx = df.index
+    PX = pd.DataFrame({c: d.c.reindex(pd.date_range(d.index[0], idx[-1])).ffill().reindex(idx) for c, d in coin_data.items()})
+    DV = pd.DataFrame({c: (d.c * d.v).reindex(pd.date_range(d.index[0], idx[-1])).ffill().reindex(idx) for c, d in coin_data.items()}).rolling(90, min_periods=60).mean()
+    vol = np.log(PX).diff().rolling(30, min_periods=20).std() * np.sqrt(365)
+    reg = df.regime
+    S = {}
+    for c in PX:
+        tr = _trend(PX[c])
+        s = pd.Series(np.where(reg > 0, np.where(tr > 0, 1.0, 0.5), np.where(reg < 0, np.where(tr < 0, -1.0, 0.0), 0.0)), index=idx).where(tr.notna())
+        S[c] = (s + np.where(df.pci_on & (s > 0), P["pci_boost"], 0)).clip(-1.5, 1.5)
+    unit = pd.DataFrame(S) * (P["vol_target"] / vol).clip(upper=P["vol_cap"])
+    ok = unit.notna() & vol.notna()
+    ok &= DV.where(ok).rank(axis=1, ascending=False) <= topn
+    m = np.log(PX).diff(mom_lb).where(ok)
+    w = np.exp(tilt * m.sub(m.mean(axis=1), axis=0)).where(ok)
+    w = w.div(w.sum(axis=1), axis=0).fillna(0)
+    pos = unit.fillna(0) * w
+    # общий множитель риска: как у модели только на BTC (по прошлым 90 дням)
+    R = PX.pct_change()
+    rp = (pos.shift(1) * R).sum(axis=1)
+    rb = (df.signal.shift(1) * df.btc.pct_change())
+    k = (rb.rolling(window, min_periods=window // 2).std() / rp.rolling(window, min_periods=window // 2).std()).clip(0.5, 2.0).shift(1).fillna(1.0)
+    return pos.mul(k, axis=0)
+
+
+def multi_backtest(W: pd.DataFrame, coin_data: dict, start: str = "2018-05-21", deposit: float = 100.0) -> dict:
+    """Бэктест портфеля монет: доли W держатся следующие сутки, комиссия 0.1% оборота у BTC и 0.2% у остальных."""
+    PX = pd.DataFrame({c: d.c.reindex(pd.date_range(d.index[0], W.index[-1])).ffill().reindex(W.index) for c, d in coin_data.items()})
+    R = PX.pct_change().fillna(0)
+    cost = pd.Series({c: (0.001 if c == "BTC" else 0.002) for c in W.columns})
+    r = (W.shift(1).fillna(0) * R[W.columns]).sum(axis=1) - (W.diff().abs().fillna(0) * cost).sum(axis=1)
+    r = r.loc[start:]
+    eq = deposit * (1 + r).cumprod()
+    yrs = max(len(r) / 365, 1e-9)
+    return dict(final=float(eq.iloc[-1]), cagr=float((eq.iloc[-1] / deposit) ** (1 / yrs) - 1),
+                max_dd=float((eq / eq.cummax() - 1).min()), sharpe=float(r.mean() / r.std() * np.sqrt(365)), equity=eq)
 
 
 # ───────── Расчёт
@@ -298,6 +365,8 @@ def closed_only(d: dict, today: pd.Timestamp | None = None) -> dict:
     out = dict(d)
     for k in ("btc", "cb", "bn"):
         out[k] = d[k][d[k].index < today]
+    if d.get("coins"):
+        out["coins"] = {c: x[x.index < today] for c, x in d["coins"].items()}
     return out
 
 
@@ -318,6 +387,29 @@ def side_of(x: float) -> int:
 def changed(prev: float | None, new: float, step: float = 0.25) -> bool:
     """Пост только при смене направления (лонг, шорт, кэш) или изменении размера больше чем на step."""
     return prev is None or side_of(prev) != side_of(new) or abs(new - prev) > step
+
+
+def coins_changed(prev: dict | None, new: dict, step: float = 0.25) -> bool:
+    """Портфель монет: пост, если у какой-то монеты сменилась сторона (вход, выход, разворот)
+    или доли в сумме сдвинулись больше чем на step депозита."""
+    p = (prev or {}).get("coins")
+    if p is None:
+        return True
+    n = new.get("coins") or {}
+    if {c: side_of(v) for c, v in p.items() if side_of(v)} != {c: side_of(v) for c, v in n.items() if side_of(v)}:
+        return True
+    return sum(abs(n.get(c, 0) - p.get(c, 0)) for c in set(p) | set(n)) > step
+
+
+def coin_targets(df: pd.DataFrame, d: dict, topn: int = 6) -> tuple[dict, dict, pd.DataFrame]:
+    """Доли монет на последнюю закрытую дату и цены закрытия. Пусто, если данных по монетам нет."""
+    if not d.get("coins"):
+        return {}, {}, pd.DataFrame()
+    W = multi_portfolio(df, d["coins"], topn=topn)
+    last = W.iloc[-1]
+    w = {c: round(float(np.clip(v, -LIMIT, LIMIT)), 4) for c, v in last.items() if abs(v) > 1e-4}
+    px = {c: float(x.c.iloc[-1]) for c, x in d["coins"].items() if c in w and len(x)}
+    return w, px, W
 
 
 def state_of(row: pd.Series) -> dict:
@@ -462,12 +554,32 @@ class LayersService:
         day = now_ms // 86_400_000
         if not self.on() or (not force and settings.get(self.conn, "btc_layers_day") == day):
             return None
-        df = await asyncio.to_thread(model, self.cfg, self.conn, True, d)
+        c = lc(self.cfg, self.conn)
+        raw = d if d is not None else await asyncio.to_thread(load, True)
+        df = await asyncio.to_thread(model, self.cfg, self.conn, False, raw)
         st = state_of(df.iloc[-1])
         rep = await asyncio.to_thread(report, df, self.report_path)
         st["bt"] = {k: rep[k] for k in ("final", "cagr", "max_dd", "start")}
+        multi = bool(c.get("coins", True))
+        if multi:                                                  # v6: портфель монет вместо одного BTC
+            w, px, W = await asyncio.to_thread(coin_targets, df, closed_only(raw), int(c.get("topn", 6)))
+            if w:
+                st["coins"], st["coin_px"] = w, px
+                mb = multi_backtest(W, closed_only(raw)["coins"])
+                st["bt_coins"] = {k: round(float(mb[k]), 4) for k in ("final", "cagr", "max_dd", "sharpe")}
+            else:
+                multi = False                                      # монеты не скачались: работаем только по BTC
         prev = settings.get(self.conn, "btc_layers_posted")          # с чем сравнивать: последний опубликованный пост
-        if self.pub and (prev is None or changed(prev["signal"], st["signal"])):
+        if self.pub and multi:
+            if coins_changed(prev, st):
+                eff = settings.effective(self.cfg, self.conn)["publishing"]
+                text, nums = templates.btc_layers_coins(st, prev, eff.get("mode", "paper"), eff.get("lang", "ru"))
+                if await self.pub.publish("btc_layers", text, nums) in ("sent", "pending", "no_telegram"):
+                    settings.put(self.conn, "btc_layers_posted", st)
+                    log_ = (settings.get(self.conn, "btc_layers_log") or [])[-19:]
+                    settings.put(self.conn, "btc_layers_log", log_ + [{"date": st["date"], "signal": st["coins"].get("BTC", 0.0),
+                                                                       "btc": st["btc"]}])
+        elif self.pub and (prev is None or changed(prev["signal"], st["signal"])):
             eff = settings.effective(self.cfg, self.conn)["publishing"]
             lev = int(settings.effective(self.cfg, self.conn).get("paper", {}).get("leverage", 5))
             text, nums = templates.btc_layers(st, prev, eff.get("mode", "paper"), eff.get("lang", "ru"), lev)
@@ -477,8 +589,15 @@ class LayersService:
                 settings.put(self.conn, "btc_layers_log", log_ + [{"date": st["date"], "signal": st["signal"], "btc": st["btc"]}])
         settings.put(self.conn, "btc_layers_state", st)
         settings.put(self.conn, "btc_layers_day", day)
-        if self.demo and lc(self.cfg, self.conn).get("paper", True):
-            await self.demo.layers_target(st["signal"], st["date"], px_hint=st["btc"])
+        if self.demo and c.get("paper", True):
+            if multi:                                              # каждая монета к своей доле; ушедшие из портфеля: в ноль
+                held = {r[0] for r in self.conn.execute("SELECT DISTINCT symbol FROM demo_trades WHERE exchange='layers' "
+                                                         "AND status='open'")}
+                for coin in sorted(set(st["coins"]) | {h.replace("USDT", "") for h in held}):
+                    await self.demo.layers_target(st["coins"].get(coin, 0.0), st["date"], band=0.05, symbol=f"{coin}USDT",
+                                                  px_hint=st["coin_px"].get(coin))
+            else:
+                await self.demo.layers_target(st["signal"], st["date"], px_hint=st["btc"])
         return st
 
 

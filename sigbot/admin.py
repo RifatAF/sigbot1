@@ -273,6 +273,14 @@ class Admin:
             if bt:
                 L += ["", f"📊 На истории с {bt['start']}: 100$ → {bt['final']:,.0f}$, {bt['cagr'] * 100:+.0f}% в год, "
                           f"просадка до {bt['max_dd'] * 100:.0f}%"]
+            if s.get("coins"):
+                L += ["", "🪙 <b>Портфель монет</b> (топ по объёму, свой тренд у каждой; общий риск как у BTC):"]
+                for coin, w in sorted(s["coins"].items(), key=lambda kv: -abs(kv[1])):
+                    L.append(f"   {'🟢 лонг' if w > 0 else '🔴 шорт'} {coin} {abs(w) * 100:.0f}% депозита")
+                bc = s.get("bt_coins")
+                if bc:
+                    L.append(f"📊 Портфель на истории: 100$ → {bc['final']:,.0f}$, {bc['cagr'] * 100:+.0f}% в год, "
+                             f"просадка до {bc['max_dd'] * 100:.0f}%, Шарп {bc['sharpe']:.2f}")
         dt = DemoTrader(self.cfg, self.conn)
         if dt.has("layers"):
             a = dt.account("layers")

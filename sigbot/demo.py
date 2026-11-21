@@ -292,10 +292,11 @@ class DemoTrader:
     def has(self, ex: str) -> bool:
         return self.conn.execute("SELECT 1 FROM paper_accounts WHERE exchange=?", (ex,)).fetchone() is not None
 
-    def net_notional(self, ex: str, px: float) -> float:
-        """Текущая позиция счёта в $, со знаком (лонг +, шорт −)."""
+    def net_notional(self, ex: str, px: float, symbol: str | None = None) -> float:
+        """Текущая позиция счёта в $, со знаком (лонг +, шорт −); symbol: только по этой монете."""
         return sum(r["open_qty"] * px * (1 if r["side"] == "long" else -1) for r in
-                   self.conn.execute("SELECT * FROM demo_trades WHERE exchange=? AND status='open'", (ex,)))
+                   self.conn.execute("SELECT * FROM demo_trades WHERE exchange=? AND status='open'", (ex,))
+                   if symbol is None or r["symbol"] == symbol)
 
     async def layers_target(self, pos: float, day: str, band: float = 0.10, symbol: str = "BTCUSDT",
                             px_hint: float | None = None):
@@ -319,28 +320,41 @@ class DemoTrader:
 
     async def _rebalance(self, ex: str, px: float, pos: float, day: str, band: float, symbol: str):
         eq = self.equity(ex)
-        cur, tgt = self.net_notional(ex, px), pos * eq
-        if abs(tgt - cur) <= band * eq:
+        cur, tgt = self.net_notional(ex, px, symbol), pos * eq
+        if abs(tgt - cur) <= band * eq and not (cur and not tgt):
             return
-        rows = self.conn.execute("SELECT * FROM demo_trades WHERE exchange=? AND status='open' ORDER BY id DESC", (ex,)).fetchall()
+        rows = self.conn.execute("SELECT * FROM demo_trades WHERE exchange=? AND status='open' AND symbol=? ORDER BY id DESC",
+                                 (ex, symbol)).fetchall()
+        coin = symbol.replace("USDT", "")
         flip = cur and (tgt == 0 or (tgt > 0) != (cur > 0))
         if flip:                                       # смена стороны или кэш: закрыть всё
             for r in rows:
-                await self._close(r, px, None, "BTC Layers: " + ("в кэш" if not tgt else "смена стороны"))
+                await self._close(r, px, None, f"BTC Layers {coin}: " + ("выход" if not tgt else "смена стороны"))
             cur = 0.0
         rule = await self.rules(ex, symbol)
         need = max(rule["min_notional"], rule["min_qty"] * px)
+        if not tgt:
+            return
+        if not cur and abs(tgt) < need / 2:            # доля меньше половины минимума биржи: поднимать до минимума нельзя
+            await self._say(f"🧪 BTC Layers: {coin} {pos:+.2f} это {abs(tgt):.2f}$, меньше половины минимума биржи "
+                            f"{need:.2f}$, не открываю")
+            return
+        if cur and abs(tgt) < need / 2:                # цель меньше половины минимума: держать нельзя, закрыть
+            for r in rows:
+                await self._close(r, px, None, f"BTC Layers {coin}: доля {pos:+.2f} меньше минимума биржи {need:.2f}$")
+            return
         if cur and abs(abs(tgt) - abs(cur)) < need:    # у BTC минимум Binance около 100$: мелкую разницу не трогаем
-            await self._say(f"🧪 BTC Layers: позиция {pos:+.2f}, разница {abs(abs(tgt) - abs(cur)):.2f}$ меньше минимума "
+            await self._say(f"🧪 BTC Layers: {coin} {pos:+.2f}, разница {abs(abs(tgt) - abs(cur)):.2f}$ меньше минимума "
                             f"биржи {need:.2f}$, держу как есть")
             return
         if abs(tgt) > abs(cur):                        # добрать разницу новой сделкой
-            await self.open("layers", f"{day}:{len(rows)}", symbol, "long" if tgt > 0 else "short",
+            ref = f"{day}:{len(rows)}" if symbol == "BTCUSDT" else f"{day}:{coin}:{len(rows)}"
+            await self.open("layers", ref, symbol, "long" if tgt > 0 else "short",
                             (abs(tgt) - abs(cur)) / max(self.equity(ex), 1e-9) * 100, exchange=ex)
         elif abs(tgt) < abs(cur):                      # уменьшить: срезать долю с каждой сделки
             k = 1 - abs(tgt) / abs(cur)
             for r in rows:
-                await self._close(r, px, k * r["open_qty"] / r["qty"], f"BTC Layers: позиция {pos:+.2f}")
+                await self._close(r, px, k * r["open_qty"] / r["qty"], f"BTC Layers {coin}: позиция {pos:+.2f}")
 
     # ---------- раз в минуту: фандинг и ликвидации
     async def tick(self, now_ms: int | None = None):
