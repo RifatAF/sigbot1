@@ -96,10 +96,13 @@ class Collector:
         self.health.ok("universe")
 
     # ---------- свечи ----------
-    async def sync_klines(self, symbol: str, market: str, tf: str, first_back_ms: int):
+    async def sync_klines(self, symbol: str, market: str, tf: str, first_back_ms: int, from_ms: int | None = None):
+        """Догрузка с последней сохранённой свечи ВКЛЮЧИТЕЛЬНО: последняя свеча в базе обычно была ещё не закрыта
+        (биржа отдаёт текущую свечу), поэтому её надо перекачать и заменить полной. Раньше загрузка шла со следующей,
+        и в базе навсегда оставалась свеча за первые секунды часа: цели и стопы по ней не срабатывали."""
         step = MIN if tf == "1m" else HOUR
-        start = last_ts(self.conn, symbol, market, tf)
-        start = start + step if start else now_ms() - first_back_ms
+        start = from_ms if from_ms is not None else last_ts(self.conn, symbol, market, tf)
+        start = start if start else now_ms() - first_back_ms
         while True:
             rows = await self.bn.klines(symbol, market, tf, start_ms=start, limit=1000)
             if not rows:
@@ -110,9 +113,26 @@ class Collector:
                 break
             start = rows[-1][0] + step
 
+    async def repair_klines(self, days: int = 40):
+        """Один раз после обновления: перекачать часовые свечи за days дней (и минутные за 2 дня), чтобы заменить
+        недокачанные свечи, записанные старой версией. После этого цели открытых сигналов перепроверяются."""
+        if settings.get(self.conn, "klines_repaired_v1") or not self.symbols:
+            return
+        t = now_ms()
+        for sym in list(self.symbols):
+            for market in ("futures", "spot"):
+                await self.sync_klines(sym, market, "1h", 0, from_ms=(t - days * 86_400_000) // HOUR * HOUR)
+                await self.sync_klines(sym, market, "1m", 0, from_ms=(t - 2 * 86_400_000) // MIN * MIN)
+        settings.put(self.conn, "klines_repaired_v1", t)
+        log.info("klines repaired: %d symbols, %d days", len(self.symbols), days)
+
     async def loop_klines(self):
         while True:
             t0 = time.monotonic()
+            try:
+                await self.repair_klines()
+            except Exception as e:
+                self.health.fail("klines_repair", e)
             for sym in list(self.symbols):
                 for market in ("futures", "spot"):
                     try:

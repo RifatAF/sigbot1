@@ -249,12 +249,32 @@ class LivePortfolio:
             av = float(C[sym].loc[:day].diff().abs().tail(plan["atr_days"]).mean()) * 1.3
         return None if np.isnan(av) or av <= 0 else feed.levels(px, av, sd, plan)
 
+    def _bars(self, sym: str, since: int, now_ms: int) -> list[tuple[int, int, float, float]]:
+        """Свечи для проверки целей и стопа с метки since: закрытые минутные, как на бирже (заявка исполняется,
+        как только цена коснулась уровня, без ожидания закрытия часа или дня). Где минутных нет (старая история),
+        закрытые часовые. Возвращает (начало, конец, максимум, минимум)."""
+        H = 3_600_000
+        m1 = self.conn.execute("SELECT ts, high, low FROM candles WHERE symbol=? AND market='futures' AND tf='1m' "
+                               "AND ts>=? AND ts+60000<=? ORDER BY ts", (sym, since, now_ms)).fetchall()
+        first = m1[0][0] if m1 else now_ms
+        h1 = self.conn.execute("SELECT ts, high, low FROM candles WHERE symbol=? AND market='futures' AND tf='1h' "
+                               "AND ts>=? AND ts+?<=? ORDER BY ts", (sym, since, H, min(first, now_ms))).fetchall()
+        out = [(ts, ts + H, hi, lo) for ts, hi, lo in h1]
+        start = out[-1][1] if out else since
+        out += [(ts, ts + 60_000, hi, lo) for ts, hi, lo in m1 if ts >= start]
+        return out
+
     async def manage(self, now_ms: int) -> None:
-        """Каждый час: дошла ли цена открытых сигналов тренда до TP1, TP2 или стопа (по закрытым часовым свечам)."""
-        from . import feed, templates
+        """Каждую минуту: дошла ли цена открытых сигналов тренда до TP1, TP2 или стопа (по закрытым минутным свечам)."""
+        from . import feed, settings, templates
         mode = self.cfg["publishing"]["mode"]
+        # свечи перекачаны после исправления сборщика: один раз пройти открытые сигналы с самого входа,
+        # чтобы найти цели и стопы, которые старые недокачанные свечи не показали (взятые цели не повторяются)
+        rescan = bool(settings.get(self.conn, "klines_repaired_v1")) and not settings.get(self.conn, "trend_rescan_v1")
         for r in self.conn.execute("SELECT * FROM trend_signals WHERE status='open'").fetchall():
             st = self._st(r)
+            if rescan and st.get("stop") is not None:
+                st["last_ts"] = int(r["open_day"]) + DAY
             if st.get("stop") is None:                      # сигнал открыт до появления целей: ставим их с этого часа
                 lv = self._levels(r["symbol"], int(r["open_day"]), r["entry"], 1 if r["side"] == "long" else -1)
                 if lv is None:
@@ -263,24 +283,26 @@ class LivePortfolio:
                 self.conn.execute("UPDATE trend_signals SET stop=?, tp1=?, tp2=? WHERE id=?", (lv["stop"], lv["tp1"], lv["tp2"], r["id"]))
                 self._save(r["id"], st)
                 continue
-            rows = self.conn.execute("SELECT ts, high, low FROM candles WHERE symbol=? AND market='futures' AND tf='1h' "
-                                     "AND ts>=? AND ts<=? ORDER BY ts", (r["symbol"], st.get("last_ts", r["open_day"] + DAY),
-                                                                         now_ms - 3_600_000)).fetchall()
-            for ts, hi, lo in rows:
-                st["last_ts"] = ts + 3_600_000
-                for ev in feed.step(st, ts // 1000 + 3600, hi, lo):
+            rows = self._bars(r["symbol"], int(st.get("last_ts", r["open_day"] + DAY)), now_ms)
+            for ts, end, hi, lo in rows:
+                st["last_ts"] = end
+                for ev in feed.step(st, end // 1000, hi, lo):
+                    late = now_ms - end > 2 * 3_600_000      # уровень был пройден раньше (перепроверка)
                     if getattr(self, "demo", None):
                         await self.demo.reduce("trend", str(r["id"]), None if ev["what"] == "sl" else ev["part"],
-                                               {"tp1": "TP1", "tp2": "TP2", "sl": "стоп"}[ev["what"]])
+                                               {"tp1": "TP1", "tp2": "TP2", "sl": "стоп"}[ev["what"]],
+                                               px=ev["price"])     # заявка на уровне: цена уровня, как на бирже
                     if st["rem"] > 1e-9:
                         text, nums = templates.trade_event(r["symbol"], r["side"], ev["what"], ev["price"], r["entry"],
-                                                           ev["part"], st["rem"], st["stop"], mode, self._lang())
+                                                           ev["part"], st["rem"], st["stop"], mode, self._lang(), late=late)
                         await self.pub.publish("trend_update", text, nums)
                 if st["rem"] <= 1e-9:
-                    await self._closed(r, st, ts + 3_600_000, mode)
+                    await self._closed(r, st, end, mode)
                     break
             else:
                 self._save(r["id"], st)
+        if rescan:
+            settings.put(self.conn, "trend_rescan_v1", now_ms)
 
     async def signals(self, day: int, C: pd.DataFrame, new: dict, first: bool = False) -> str | None:
         """Сигналы ленты: позиция от signal_min_weight открывается постом со стопом и двумя целями;

@@ -252,10 +252,12 @@ class DemoTrader:
         miss = sum(1 for k, r in refs if not self.conn.execute("SELECT 1 FROM demo_trades WHERE kind=? AND ref=?", (k, r)).fetchone())
         return len(refs), miss
 
-    async def reduce(self, kind: str, ref: str, part: float | None, why: str):
-        """Закрыть долю part исходной позиции (None: всё, что осталось)."""
+    async def reduce(self, kind: str, ref: str, part: float | None, why: str, px: float | None = None):
+        """Закрыть долю part исходной позиции (None: всё, что осталось). px: цена уровня (цель или стоп):
+        заявка на бирже исполняется по своей цене, даже если бот заметил касание позже."""
+        given = px
         for r in self.conn.execute("SELECT * FROM demo_trades WHERE kind=? AND ref=? AND status='open'", (kind, ref)).fetchall():
-            px = await self.price(r["exchange"], r["symbol"])
+            px = given or await self.price(r["exchange"], r["symbol"])
             if not px:
                 continue
             await self._close(r, px, part, why)

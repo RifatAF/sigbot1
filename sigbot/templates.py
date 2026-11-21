@@ -334,9 +334,14 @@ EV = {"ru": {"tp1": "✅ {c} {s}: TP1 {p}", "tp2": "🎯 {c} {s}: TP2 {p}", "sl"
 
 
 def trade_event(symbol: str, side: str, what: str, price: float, entry: float, part: float, rem: float,
-                stop: float | None, mode: str, lang: str = "en") -> tuple[str, list[float]]:
-    """Цель или стоп одной-двумя строками."""
+                stop: float | None, mode: str, lang: str = "en", late: bool = False) -> tuple[str, list[float]]:
+    """Цель или стоп одной-двумя строками. late: уровень был пройден раньше, пост с опозданием."""
     f, ru = Fmt(), lang == "ru"
+    if late:
+        text, nums = trade_event(symbol, side, what, price, entry, part, rem, stop, mode, lang)
+        tag, note = _tag(mode), ("⏱ Уровень был пройден раньше, пост с опозданием" if ru else "⏱ Level was hit earlier, late post")
+        body = text[:len(text) - len(tag)] if tag and text.endswith(tag) else text
+        return body + "\n" + note + (tag if tag and text.endswith(tag) else ""), nums
     if what == "sl" or rem <= 1e-9:
         icon = "❌" if what == "sl" else "🎯"
         name = ("стоп" if ru else "stop") if what == "sl" else (f"цель {what[-1]}" if ru else f"target {what[-1]}")

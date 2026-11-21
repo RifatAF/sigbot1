@@ -47,6 +47,17 @@ async def scheduler(cfg, conn, live: Live, pub: Publisher, port=None, lst=None, 
             await live.manage(now)
         except Exception as e:
             log.exception("manage: %s", e)
+        eff0 = settings.effective(cfg, conn)
+        if port and eff0.get("portfolio", {}).get("enabled"):
+            try:
+                await port.manage(now)                      # цели и стопы тренда каждую минуту, как заявки на бирже
+            except Exception as e:
+                log.exception("trend targets: %s", e)
+        if lst and eff0.get("listings", {}).get("enabled") and now // 60_000 % 5 == 0:
+            try:
+                await lst.manage(now)                       # стоп шорта листинга в течение суток, раз в 5 минут
+            except Exception as e:
+                log.exception("listing stops: %s", e)
         if getattr(live, "demo", None):
             try:
                 await live.demo.tick(now)                # бумажные счета: ликвидации и фандинг

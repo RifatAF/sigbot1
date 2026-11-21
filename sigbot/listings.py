@@ -101,6 +101,12 @@ class ListingShorts:
             text, nums = templates.listing_signal(sym, entry, stop, lc, self.cfg["publishing"]["mode"], self._lang(), ex)
             posts.append(await self.pub.publish("listing", text, nums))
         # 2. ведение: стоп по максимуму суток, иначе выход по времени
+        return posts + await self.manage(now)
+
+    async def manage(self, now: int) -> list[str]:
+        """Стоп как на бирже: срабатывает, как только максимум текущих (ещё не закрытых) суток дошёл до стопа.
+        Выход по времени только по закрытым суткам. Вызывается из планировщика каждые 5 минут и из run_daily."""
+        posts = []
         for t in self.open_trades():
             try:
                 k = await self.src(t.get("exchange")).klines(t["symbol"], "futures", "1d", t["entry_ts"], 100)
@@ -110,11 +116,11 @@ class ListingShorts:
             exit_price = reason = None
             exit_ts = None
             for ts, o, h, lo, c, *_ in k:
-                if ts + DAY > now:
-                    break                                    # только закрытые сутки
-                if h >= t["stop"]:
-                    exit_price, reason, exit_ts = t["stop"], "stop", ts + DAY
+                if h >= t["stop"]:                           # и в незакрытых сутках: стоп-заявка на бирже уже бы исполнилась
+                    exit_price, reason, exit_ts = t["stop"], "stop", min(ts + DAY, now)
                     break
+                if ts + DAY > now:
+                    break                                    # выход по времени: только закрытые сутки
                 if ts + DAY >= t["exit_due_ts"]:
                     exit_price, reason, exit_ts = c, "time", ts + DAY
                     break
@@ -125,7 +131,8 @@ class ListingShorts:
             self.conn.execute("UPDATE listing_trades SET status='closed', exit_ts=?, exit_price=?, exit_reason=?, "
                               "pnl_pct=? WHERE symbol=?", (exit_ts, exit_price, reason, pnl, t["symbol"]))
             if getattr(self, "demo", None):
-                await self.demo.reduce("listing", t["symbol"], None, "стоп" if reason == "stop" else "выход по времени")
+                await self.demo.reduce("listing", t["symbol"], None, "стоп" if reason == "stop" else "выход по времени",
+                                       px=exit_price if reason == "stop" else None)
             text, nums = templates.listing_exit(t["symbol"], t["entry"], exit_price, reason, pnl,
                                                 self.cfg["publishing"]["mode"], self._lang(),
                                                 int((exit_ts - t["entry_ts"]) / DAY))
