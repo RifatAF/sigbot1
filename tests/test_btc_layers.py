@@ -184,6 +184,11 @@ def test_loop_calculates_at_start(cfg, conn, data, tmp_path, monkeypatch):
     sv = bl.LayersService(cfg, conn, Pub(), dt)
     sv.report_path = str(tmp_path / "bl.json")
     monkeypatch.setattr(bl, "load", lambda refresh=False: data)
+    from sigbot import pci
+
+    def no_net(*a, **k):
+        raise RuntimeError("нет сети в тестах")
+    monkeypatch.setattr(pci, "fetch", no_net)
     said = []
 
     async def run():
@@ -281,3 +286,22 @@ def test_old_btc_position_shrinks_below_minimum_is_closed(cfg, conn):
     assert dt.net_notional("layers", 50000.0, "BTCUSDT") < 0
     asyncio.run(dt.layers_target(-0.18, "d2", band=0.05))
     assert dt.net_notional("layers", 50000.0, "BTCUSDT") == 0
+
+
+def test_pci_starts_add_boost(cfg, data):
+    """PCI: ряды в формате pci.fetch дают старты «прогноза ЛОНГ», модель добавляет докупку только при стороне > 0."""
+    from sigbot import pci
+    days = data["btc"].index
+    rng = np.random.default_rng(5)
+    c = data["btc"]
+    o = c.shift().fillna(c)
+    P = {"ohlcv": pd.DataFrame({"open": o, "high": np.maximum(o, c) * 1.01, "low": np.minimum(o, c) * 0.99, "close": c,
+                                "volume": 1e4 * np.exp(rng.normal(0, .3, len(days)))}, index=days),
+         "oiu": pd.Series(1e10 * np.exp(np.cumsum(rng.normal(0, .02, len(days)))), index=days)[days >= "2022-01-01"],
+         "fr": pd.Series(rng.normal(1e-4, 1e-4, len(days) * 3), index=pd.date_range(days[0], periods=len(days) * 3, freq="8h")),
+         "dvol": pd.Series(60 + rng.normal(0, 5, len(days)), index=days)}
+    f = pci.forecast_long_start(P, data["cb"], data["bn"])
+    assert f.dtype == bool and f.sum() > 0
+    df = bl.model({**cfg, "btc_layers": {**cfg["btc_layers"], "pci": True}}, d=data, pdata=P)
+    assert df.attrs["pci"] and df.pci_on.any()
+    assert ((df.boost > 0) <= (df.side > 0)).all() and df.signal.abs().max() <= bl.LIMIT + 1e-9

@@ -370,10 +370,28 @@ def closed_only(d: dict, today: pd.Timestamp | None = None) -> dict:
     return out
 
 
-def model(cfg, conn=None, refresh: bool = False, d: dict | None = None) -> pd.DataFrame:
+def pci_starts(d: dict, conn=None, cache_dir: str = CACHE, pdata: dict | None = None) -> pd.Series | None:
+    """Старты «прогноза ЛОНГ» PCI v9 по закрытым дням. Источники не ответили: None (модель без докупки)."""
+    import logging
+    from . import pci
+    try:
+        P_ = pdata if pdata is not None else pci.fetch(cache_dir, conn)
+        today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+        P_ = {k: v[v.index < today] for k, v in P_.items()}          # только закрытые сутки
+        return pci.forecast_long_start(P_, d["cb"], d["bn"])
+    except Exception as e:
+        logging.getLogger(__name__).warning("PCI: %s", e)
+        return None
+
+
+def model(cfg, conn=None, refresh: bool = False, d: dict | None = None, pdata: dict | None = None) -> pd.DataFrame:
     c = lc(cfg, conn)
+    live = d is None                                 # свои данные из сети; тесты и пересчёт подают d сами
     d = closed_only(d if d is not None else load(refresh))
-    return compute(d, pci_long_start=None, vol_target=float(c.get("vol_target", P["vol_target"])))
+    starts = pci_starts(d, conn, pdata=pdata) if c.get("pci") and (live or pdata is not None) else None
+    df = compute(d, pci_long_start=starts, vol_target=float(c.get("vol_target", P["vol_target"])))
+    df.attrs["pci"] = starts is not None
+    return df
 
 
 def pos_text(x: float) -> str:
@@ -556,8 +574,17 @@ class LayersService:
             return None
         c = lc(self.cfg, self.conn)
         raw = d if d is not None else await asyncio.to_thread(load, True)
-        df = await asyncio.to_thread(model, self.cfg, self.conn, False, raw)
+        pdata = None
+        if c.get("pci") and d is None:                             # докупка по PCI v9: свои источники, докачка нового
+            from . import pci
+            try:
+                pdata = await asyncio.to_thread(pci.fetch, CACHE, self.conn)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("PCI data: %s", e)
+        df = await asyncio.to_thread(model, self.cfg, self.conn, False, raw, pdata)
         st = state_of(df.iloc[-1])
+        st["pci_on"] = bool(df.attrs.get("pci"))
         rep = await asyncio.to_thread(report, df, self.report_path)
         st["bt"] = {k: rep[k] for k in ("final", "cagr", "max_dd", "start")}
         multi = bool(c.get("coins", True))
