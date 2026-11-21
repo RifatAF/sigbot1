@@ -41,6 +41,120 @@ class Admin:
         return ("⛔ ОСТАНОВЛЕН (аварийная кнопка)" if p.get("kill_switch") else
                 "⏸ на паузе, посты не уходят" if p.get("paused") else "▶️ работает")
 
+    # ---------- сводка: всё главное одним экраном ----------
+    KEYS = {"🏠 Сводка": "home", "📋 Позиции": "pos", "🧪 Счета": "demo", "🧱 Layers": "layers", "📈 Графики": "snaps",
+            "⚙️ Меню": "menu"}
+
+    def reply_keyboard(self) -> dict:
+        """Постоянные кнопки внизу чата: главное в одно нажатие."""
+        k = list(self.KEYS)
+        return {"keyboard": [[{"text": t} for t in k[:3]], [{"text": t} for t in k[3:]]],
+                "resize_keyboard": True, "is_persistent": True}
+
+    def _btc_line(self) -> str:
+        r = self.conn.execute("SELECT close, ts FROM candles WHERE symbol='BTCUSDT' AND market='futures' AND tf='1m' "
+                              "ORDER BY ts DESC LIMIT 1").fetchone()
+        if not r:
+            r = self.conn.execute("SELECT close, ts FROM candles WHERE symbol='BTCUSDT' AND market='futures' "
+                                  "ORDER BY ts DESC LIMIT 1").fetchone()
+        if not r:
+            return ""
+        d = self.conn.execute("SELECT close FROM candles WHERE symbol='BTCUSDT' AND market='futures' AND tf='1h' "
+                              "AND ts<=? ORDER BY ts DESC LIMIT 1", (r[1] - DAY,)).fetchone()
+        ch = f" ({(r[0] / d[0] - 1) * 100:+.1f}% за сутки)" if d and d[0] else ""
+        return f"BTC <b>{r[0]:,.0f}$</b>{ch}"
+
+    def home_text(self) -> str:
+        """Сводка для владельца: состояние, бумажные счета, открытые позиции с ценой и целями, BTC Layers, что закрылось."""
+        from . import positions
+        from .demo import DemoTrader, acc_name
+        e = self.eff()
+        p = e["publishing"]
+        now = int(time.time() * 1000)
+        L = [f"🏠 <b>Сводка</b> · {time.strftime('%d.%m %H:%M', time.gmtime(now / 1000))} UTC · {self._state(p)} · "
+             f"{self.MODES.get(p['mode'], (p['mode'],))[0]}"]
+        b = self._btc_line()
+        if b:
+            L.append(b)
+        dt = DemoTrader(self.cfg, self.conn)
+        acc = []
+        for ex in dt.exchanges() + (["layers"] if dt.has("layers") else []):
+            try:
+                a, eq = dt.account(ex), dt.equity(ex)
+                n = self.conn.execute("SELECT COUNT(*) FROM demo_trades WHERE exchange=? AND status='open'", (ex,)).fetchone()[0]
+                acc.append(f"   {acc_name(ex)}: <b>{eq:.2f}$</b> ({(eq / a['start_usd'] - 1) * 100:+.1f}%), открыто {n}")
+            except Exception:
+                continue
+        if acc and e.get("paper", {}).get("enabled", True):
+            L += ["", "💰 <b>Бумажные счета</b>"] + acc
+        try:
+            data = positions.collect(self.conn, now)
+            text, _ = positions.post(data, "auto", "ru")
+            body = text.split("\n")[2:]                   # без заголовка с датой
+            L += ["", f"📋 <b>Позиции ({len(data['open'])})</b>"] + [x for x in body if x.strip()]
+        except Exception as ex_:
+            log.warning("home positions: %s", ex_)
+        s = settings.get(self.conn, "btc_layers_state")
+        if s and e.get("btc_layers", {}).get("enabled"):
+            reg = "бычий" if s.get("regime", 0) > 0 else "медвежий"
+            if s.get("coins"):
+                parts = ", ".join(f"{c} {w * 100:+.0f}%" for c, w in sorted(s["coins"].items(), key=lambda kv: -abs(kv[1])))
+                tot = sum(abs(w) for w in s["coins"].values())
+                L += ["", f"🧱 <b>BTC Layers</b>: {tot * 100:.0f}% депозита · режим {reg}, макро {s['macro']:+.2f}",
+                      f"   {parts}" + (" · PCI +0.5" if s.get("pci") else "")]
+            else:
+                L += ["", f"🧱 <b>BTC Layers</b>: {pos_text(s['signal'])} · режим {reg}, макро {s['macro']:+.2f}"]
+        warn = []
+        if self.collector:
+            bad = [self.NAMES.get(c, c) for c, v in self.collector.health.snapshot().items() if v["error"]]
+            if bad:
+                warn.append("данные: " + ", ".join(bad[:3]))
+        pend = self.conn.execute("SELECT COUNT(*) FROM posts WHERE status='pending'").fetchone()[0]
+        if pend:
+            warn.append(f"ждут подтверждения: {pend}")
+        blocked = self.conn.execute("SELECT COUNT(*) FROM posts WHERE status='blocked' AND ts>?", (now - DAY,)).fetchone()[0]
+        if blocked:
+            warn.append(f"не отправлено постов за сутки: {blocked}")
+        L += ["", "⚠️ " + "; ".join(warn) if warn else "✅ Всё работает"]
+        return "\n".join(L)
+
+    def home_screen(self):
+        rows = [[("🔄 Обновить", "home"), ("📋 Позиции", "pos")],
+                [("🧪 Счета", "demo"), ("🧱 BTC Layers", "layers")],
+                [("📈 Графики", "snaps"), ("📱 Панель", "phone")],
+                [("⚙️ Меню и настройки", "menu")]]
+        return self.home_text(), kb(rows)
+
+    def pos_screen(self):
+        from . import positions
+        text, _ = positions.post(positions.collect(self.conn), "auto", "ru")
+        return text, kb([[("🔄 Обновить", "pos"), ("📈 На графике", "snaps")], [("🏠 Сводка", "home")]])
+
+    async def send_home(self, chat):
+        """Новая сводка; её же бот дальше обновляет сам каждые 5 минут."""
+        text, markup = self.home_screen()
+        r = await self.tg.send_message(chat, text, reply_markup=markup)
+        settings.put(self.conn, "home_msg", {"chat": chat, "id": r["message_id"]})
+
+    async def home_loop(self, every_s: int = 300):
+        """Последняя присланная сводка обновляется сама: открыл чат, а цифры свежие."""
+        last = None
+        while True:
+            await asyncio.sleep(every_s)
+            if self.leader and not self.leader.is_main:
+                continue
+            m = settings.get(self.conn, "home_msg")
+            if not m:
+                continue
+            try:
+                text, markup = self.home_screen()
+                if text != last:
+                    await self.tg.edit_text(m["chat"], m["id"], text, markup)
+                    last = text
+            except Exception as e:
+                if "not modified" not in str(e):
+                    log.info("home refresh: %s", e)
+
     def menu(self):
         e = self.eff()
         p = e["publishing"]
@@ -58,6 +172,7 @@ class Admin:
                 f" · ⚡ капитуляции {on(e['scanner'].get('enabled', True))}\n\n"
                 "Выбери раздел. Непонятно, что делает кнопка: «❓ Помощь».")
         rows = [
+            [("🏠 Сводка", "home"), ("📋 Позиции", "pos")],
             [("📊 Что открыто", "status"), ("🩺 Состояние", "health")],
             [("✅ Проверить всё", "selfcheck")],
             [("🧪 Тест в канал", "testposts:ch"), ("🧪 Тест мне", "testposts:me")],
@@ -441,6 +556,11 @@ class Admin:
         e = self.eff()
         if data == "menu":
             return await self.show(chat, self.menu(), mid)
+        if data == "home":
+            await self.show(chat, self.home_screen(), mid)
+            return settings.put(self.conn, "home_msg", {"chat": chat, "id": mid})
+        if data == "pos":
+            return await self.show(chat, self.pos_screen(), mid)
         if data == "status":
             return await self.show(chat, (self.status_text(), kb([self.BACK])), mid)
         if data == "health":
@@ -625,8 +745,23 @@ class Admin:
     async def on_message(self, msg):
         chat = msg["chat"]["id"]
         text = msg.get("text") or msg.get("caption") or ""
-        if text.startswith("/start") or text.startswith("/menu"):
+        if text.startswith("/start"):
+            await self.tg.send_message(chat, "Кнопки снизу: сводка, позиции, счета, BTC Layers, графики, меню.",
+                                       reply_markup=self.reply_keyboard(), parse_mode=None)
+            return await self.send_home(chat)
+        if text.startswith("/menu"):
             return await self.show(chat, self.menu())
+        key = self.KEYS.get(text.strip()) or {"/s": "home", "/p": "pos", "/a": "demo", "/l": "layers"}.get(text.split("@")[0].strip())
+        if key:
+            if key == "home":
+                return await self.send_home(chat)
+            screens = {"pos": lambda: self.pos_screen(), "layers": lambda: self.layers_screen(), "menu": lambda: self.menu()}
+            if key in screens:
+                return await self.show(chat, screens[key]())
+            if key == "demo":
+                return await self.show(chat, await self.demo_screen())
+            if key == "snaps":
+                return await self.show(chat, await self.snaps_screen())
         if text.startswith("/main") and self.leader:
             parts = text.split()
             if len(parts) < 2:
@@ -712,12 +847,26 @@ class Admin:
         import json as _json
         try:   # подсказки команд в Telegram по кнопке «/» и в меню бота
             await self.tg.call("setMyCommands", commands=_json.dumps([
+                {"command": "s", "description": "Сводка: счета, позиции, BTC Layers"},
+                {"command": "p", "description": "Позиции: цена, цели, стоп"},
+                {"command": "a", "description": "Бумажные счета"},
+                {"command": "l", "description": "BTC Layers"},
                 {"command": "menu", "description": "Главное меню и настройки"},
                 {"command": "main", "description": "Какой компьютер главный, переключить"},
                 {"command": "coins", "description": "Список монет: /coins BTC,ETH или /coins auto"}], ensure_ascii=False),
                 scope=_json.dumps({"type": "chat", "chat_id": self.owner}))
         except Exception as e:
             log.info("setMyCommands: %s", e)
+        asyncio.create_task(self.home_loop())
+        if not settings.get(self.conn, "owner_kb_v1") and not (self.leader and not self.leader.is_main):
+            try:                                 # один раз после обновления: кнопки внизу и свежая сводка
+                await self.tg.send_message(self.owner, "Новое: кнопки снизу (сводка, позиции, счета, BTC Layers, графики, меню) "
+                                           "и сводка, которая обновляется сама каждые 5 минут. Команды: /s /p /a /l.",
+                                           reply_markup=self.reply_keyboard(), parse_mode=None)
+                await self.send_home(self.owner)
+                settings.put(self.conn, "owner_kb_v1", 1)
+            except Exception as e:
+                log.info("owner keyboard: %s", e)
         offset = settings.get(self.conn, "tg_offset")
         while True:
             if self.leader and not self.leader.is_main:

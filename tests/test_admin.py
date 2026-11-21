@@ -171,3 +171,58 @@ def test_layers_screen_explains_position(cfg, conn):
                                             "trend": -1.0, "vol": 0.44, "side": -1.0, "vt": 0.9, "parts": {"gas": 0.19}})
     t = adm.layers_screen()[0]
     assert "ШОРТ 90% депозита" in t and "маржа при x5: 18$" in t and "доля -1.0 × размер 0.90" in t
+
+
+def test_home_summary_and_bottom_buttons(cfg, conn):
+    """Сводка: всё главное одним экраном; кнопки снизу и короткие команды открывают экраны одним нажатием."""
+    import json
+    import time as _t
+    from sigbot import settings
+
+    class TG3(TG):
+        def __init__(self):
+            super().__init__()
+            self.kw = []
+
+        async def send_message(self, chat, text, **kw):
+            self.kw.append(kw)
+            return await super().send_message(chat, text, **kw)
+
+        async def edit_text(self, chat, mid, text, markup=None):
+            self.sent.append(text)
+
+    now = int(_t.time() * 1000)
+    conn.execute("INSERT INTO candles VALUES ('BTCUSDT','futures','1h',?,60000,60100,59900,60000,1,0.5)", (now - 25 * 3_600_000,))
+    conn.execute("INSERT INTO candles VALUES ('BTCUSDT','futures','1m',?,57000,57100,56900,57000,1,0.5)", (now - 120_000,))
+    st = {"side": "short", "entry": 60000.0, "stop": 63000.0, "tp1": 57500.0, "tp2": 55000.0, "tp1_part": 0.25, "tp2_part": 0.25,
+          "rem": 0.75, "exits": [{"what": "tp1", "t": 1, "price": 57500.0, "part": 0.25}]}
+    conn.execute("INSERT INTO trend_signals (symbol, side, open_day, entry, size_pct, stop, tp1, tp2, state) "
+                 "VALUES ('BTCUSDT','short',?,60000,20,63000,57500,55000,?)", (now - 3 * DAY_MS, json.dumps(st)))
+    settings.put(conn, "btc_layers_state", {"signal": -0.9, "macro": -0.57, "regime": -1, "date": "2026-11-20",
+                                            "btc": 57000.0, "coins": {"BTC": -0.18, "ETH": -0.12}, "pci": False,
+                                            "trend": -1.0, "vol": 0.44, "side": -1.0, "vt": 0.9,
+                                            "parts": {"gas": 0.2, "fed": -1.3, "liq": -0.9, "curve": -0.4, "ttf": -0.4, "prem": None}})
+    cfg["btc_layers"]["enabled"] = True
+    tg = TG3()
+    adm = Admin(cfg, conn, tg, 7, None, None, FailLLM(), Bloggers(cfg, conn), None, None)
+    text, markup = adm.home_screen()
+    assert "Сводка" in text and "BTC <b>57,000$</b>" in text and "−5.0%" not in text and "-5.0% за сутки" in text
+    assert "Позиции (1)" in text and "цель 1 ✅" in text and "BTC -18%" in text and "ETH -12%" in text
+
+    async def run():
+        await adm.on_message({"chat": {"id": 7, "type": "private"}, "from": {"id": 7}, "text": "/start"})
+        assert tg.kw[0]["reply_markup"]["keyboard"] and "Сводка" in tg.sent[-1]
+        assert settings.get(conn, "home_msg")["id"] == len(tg.sent)
+        for label in adm.KEYS:
+            if label == "📈 Графики":
+                continue                                       # ходит в панель по сети
+            n = len(tg.sent)
+            await adm.on_message({"chat": {"id": 7, "type": "private"}, "from": {"id": 7}, "text": label})
+            assert len(tg.sent) == n + 1, label
+        n = len(tg.sent)
+        await adm.on_message({"chat": {"id": 7, "type": "private"}, "from": {"id": 7}, "text": "/p"})
+        assert "Позиции" in tg.sent[-1] and len(tg.sent) == n + 1
+    asyncio.run(run())
+
+
+DAY_MS = 86_400_000
