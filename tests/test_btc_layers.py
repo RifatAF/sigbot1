@@ -305,3 +305,30 @@ def test_pci_starts_add_boost(cfg, data):
     df = bl.model({**cfg, "btc_layers": {**cfg["btc_layers"], "pci": True}}, d=data, pdata=P)
     assert df.attrs["pci"] and df.pci_on.any()
     assert ((df.boost > 0) <= (df.side > 0)).all() and df.signal.abs().max() <= bl.LIMIT + 1e-9
+
+
+def test_trend_signal_against_layers_regime_is_skipped(cfg, conn):
+    """Фильтр рынка: в медвежьем режиме BTC Layers лонг тренда не открывается, шорт открывается."""
+    from sigbot.portfolio import LivePortfolio
+    cfg["btc_layers"]["enabled"] = True
+    settings.put(conn, "btc_layers_state", {"regime": -1, "signal": -0.9})
+    idx = pd.date_range("2024-01-01", periods=60, freq="D")
+    day = int(idx[-1].timestamp() * 1000)
+    C = pd.DataFrame({"ETHUSDT": np.linspace(2000, 3000, 60), "SOLUSDT": np.linspace(200, 100, 60)},
+                     index=[int(t.timestamp() * 1000) for t in idx])
+    p = LivePortfolio(cfg, conn, Pub())
+    asyncio.run(p.signals(day, C, {"ETHUSDT": 0.3, "SOLUSDT": -0.3}))
+    rows = {r[0]: r[1] for r in conn.execute("SELECT symbol, side FROM trend_signals")}
+    assert rows == {"SOLUSDT": "short"}
+
+
+def test_feed_regime_filter(tmp_path):
+    import json
+    from sigbot import feed
+    p = tmp_path / "bl.json"
+    p.write_text(json.dumps({"days": [{"t": 100 * 86400, "rg": 1}, {"t": 101 * 86400, "rg": -1}]}))
+    items = [{"side": "long", "entry_time": 101 * 86400}, {"side": "short", "entry_time": 101 * 86400},
+             {"side": "long", "entry_time": 102 * 86400}, {"side": "short", "entry_time": 500 * 86400}]
+    out = feed.regime_filter(items, {"layers_regime": True}, str(p))
+    assert out == [items[0], items[3]]           # решение за день до входа: день 100 бычий, день 101 медвежий
+    assert feed.regime_filter(items, {"layers_regime": False}, str(p)) == items

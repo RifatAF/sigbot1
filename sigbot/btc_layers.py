@@ -445,7 +445,8 @@ def report(df: pd.DataFrame, path: str = REPORT) -> dict:
     out = {"final": round(float(b["final"]), 2), "cagr": float(b["cagr"]), "max_dd": float(b["max_dd"]),
            "sharpe": float(b["sharpe"]), "start": str(eq.index[0].date()), "now": state_of(df.iloc[-1]),
            "days": [{"t": int(t.timestamp()), "eq": round(float(e), 2), "bh": round(float(h), 2),
-                     "pos": round(float(df.signal.get(t, 0) or 0), 3), "px": round(float(df.btc.get(t)), 2)}
+                     "pos": round(float(df.signal.get(t, 0) or 0), 3), "px": round(float(df.btc.get(t)), 2),
+                     "rg": int(df.regime.get(t, 0) or 0)}
                     for t, e, h in zip(eq.index, eq.values, bh.values)]}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"

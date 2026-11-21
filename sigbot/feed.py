@@ -205,6 +205,26 @@ def trend_positions(W: pd.DataFrame, C: pd.DataFrame, pc: dict, start: int, end:
     return out
 
 
+def regime_filter(items: list[dict], pc: dict, path: str = "reports/btc_layers.json") -> list[dict]:
+    """Как вживую: сигнал тренда против режима BTC Layers на день решения не открывается. Нет отчёта модели: без фильтра."""
+    if not pc.get("layers_regime", True):
+        return items
+    try:
+        days = json.loads(Path(path).read_text(encoding="utf-8")).get("days") or []
+    except Exception:
+        return items
+    reg = {int(d["t"]) * 1000: d.get("rg", 0) for d in days if "rg" in d}
+    if not reg:
+        return items
+    out = []
+    for it in items:
+        g = reg.get(it["entry_time"] * 1000 - DAY, 0)
+        if g and (1 if it["side"] == "long" else -1) * g < 0:
+            continue
+        out.append(it)
+    return out
+
+
 def fixed_weights(W: pd.DataFrame, thr: float) -> pd.DataFrame:
     """Веса, если торговать только сигналы фиксированным размером входа (для честной доходности ленты)."""
     out = np.zeros(W.shape)
@@ -326,7 +346,7 @@ def build(conn, cfg, start="2020-07-01", end=None) -> dict:
     C, V, FR = portfolio.daily_frames(conn, None, s - 400 * DAY, e)
     W = portfolio.weights(C, V, pc, FR=FR)
     fee = cfg["trade"]["fee_taker_pct"]
-    trend = trend_positions(W, C, pc, s, e, fee)
+    trend = regime_filter(trend_positions(W, C, pc, s, e, fee), pc)
     H, L, CL = daily_ohlc(conn, s - 60 * DAY, e)
     trend = with_plan(trend, H, L, CL, pc, fee)
     rep = latest_backtest()
